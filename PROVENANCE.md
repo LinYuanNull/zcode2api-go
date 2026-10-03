@@ -198,6 +198,11 @@ A2 把**这份部署 `.env` 的取值**当成了**代码默认值**，两条都�
 | ModelMux 集成脚本（`test/verify_zcode_accounts.py`，默认假网关） | 44/44（基线未破） |
 | 同上，`ZCODE_UPSTREAM_EXE` 指向本实现 | 47/47 |
 | `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
+| `python tools/spec_reorder.py --check`（SPEC 骨架键序） | 0 块漂移 |
+
+**提交与 CI**：A3 落地于提交 `1696bc9`（`feat(adminapi): A3 管理 API 22 路由`），
+CI run [`37141410784`](https://github.com/LinYuanNull/zcode2api-go/actions/runs/37141410784) **success**
+（CI 已加「契约键序」步骤：`python3 tools/spec_reorder.py --check`）。
 
 ## 已知未覆盖的分支（后续采样时补）
 

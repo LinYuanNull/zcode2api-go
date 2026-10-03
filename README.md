@@ -76,6 +76,7 @@ zcode2api-go/
 ├─ tools/samplecontract/      契约采样器（开发工具，不随发布产物分发）
 ├─ tools/samplefixture/       落盘契约夹具生成器（开发工具）
 ├─ tools/spec_reorder.py      校验 SPEC.md 骨架键序与样本一致（CI 守护）
+├─ tools/e2e_panel.py         A3 端到端：上游 frontend/ 面板 + 真实浏览器（查渲染后 DOM）
 ├─ PROVENANCE.md              实现依据登记（靶机 / 采样时间 / 样本编号）
 └─ .github/workflows/         CI：gofmt / go vet / go build / go test / 契约键序
 ```
