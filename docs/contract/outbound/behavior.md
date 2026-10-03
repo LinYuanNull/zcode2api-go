@@ -53,6 +53,13 @@
 > 502 只发生在 **`/v1/chat/completions`** 且入站 `stream` 为假值时。
 > `tools/behavior_diff.py` 的 `sse-to-nonstream` 场景已按此改名/改路径（见该文件）。
 
+**流式的「到达时机」**（不在 harness 的字节对照范围内，但是真流式的硬要求）：
+`/v1/messages` 透传与 `/v1/chat/completions` 转换**都必须逐写 flush** —— 上游每段数据
+到达即写出，不允许攒到 net/http 的响应缓冲（默认 2 KB）里。参考实现是 uvicorn 的
+`StreamingResponse`，逐 chunk 发；Go 侧若不显式 `http.Flusher`，小帧会被攒到连接结束才出现
+（`curl -N`、OpenAI SDK 表现为「不流式」）。flush 只改到达时机，**不改任何字节**
+（`ok-stream` / `sse-to-nonstream` 场景 flush 前后逐字节一致，已复核）。
+
 ## 二、响应形状（逐字节）
 
 ### 2.1 `/v1/chat/completions` 非流式（**紧凑 JSON，无空格**）

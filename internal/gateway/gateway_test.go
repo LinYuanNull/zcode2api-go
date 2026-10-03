@@ -34,6 +34,7 @@ type fixture struct {
 	upCount int32            // 上游收到的请求数（由 handler 维护）
 	rec     *recorder
 	st      *store.Store
+	gw      *Gateway // 便于直接调内部方法做单元级断言
 }
 
 func newFixture(t *testing.T, handler http.HandlerFunc) *fixture {
@@ -61,6 +62,7 @@ func newFixture(t *testing.T, handler http.HandlerFunc) *fixture {
 	ag := agent.New()
 	ag.SetMessagesURLForTest(f.up.URL)
 	gw := New(Options{Store: f.st, GatewayKey: func() string { return "" }, Marks: f.rec, Agent: ag})
+	f.gw = gw
 	f.srv = httptest.NewServer(gw)
 	t.Cleanup(f.srv.Close)
 	return f
@@ -136,6 +138,35 @@ func TestContentTypeCharsetAppended(t *testing.T) {
 	defer resp.Body.Close()
 	if v := resp.Header.Get("Content-Type"); v != "text/x-probe; charset=utf-8" {
 		t.Errorf("Content-Type = %q, 想要 text/x-probe; charset=utf-8", v)
+	}
+}
+
+// TestPassthroughFlushes 验证 `/v1/messages` 透传路径**逐写 flush**。
+//
+// 依据：契约 §一「上游给 SSE 无论入站 stream 是什么都照样透传」——真流式端点
+// 必须让每段数据到达即写出，否则小帧会被 net/http 的响应缓冲攒到连接结束。
+// flush 不改变字节（字节级判据见 TestPassthroughSuccess），这里只钉住
+// 「flush 分支被走到」：httptest.ResponseRecorder 在 Flush 后置 Flushed=true。
+func TestPassthroughFlushes(t *testing.T) {
+	f := newFixture(t, func(w http.ResponseWriter, r *http.Request) {})
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader("data: {\"x\":1}\n\n")),
+	}
+	rec := httptest.NewRecorder()
+	f.gw.passthrough(rec, resp)
+	if !rec.Flushed {
+		t.Error("透传路径未 flush：SSE 小帧会被响应缓冲攒住")
+	}
+	if got := rec.Body.String(); got != "data: {\"x\":1}\n\n" {
+		t.Errorf("透传体被改动：%q", got)
+	}
+	if v := rec.Header().Get("Content-Type"); v != "text/event-stream; charset=utf-8" {
+		t.Errorf("Content-Type = %q", v)
+	}
+	if v := rec.Header().Get("Cache-Control"); v != "no-cache" {
+		t.Errorf("Cache-Control = %q, 想要 no-cache", v)
 	}
 }
 

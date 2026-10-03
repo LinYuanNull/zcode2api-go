@@ -389,6 +389,12 @@ func (g *Gateway) writeBadJSON(w http.ResponseWriter, badJSONType int) {
 //   - 只搬上游 `Content-Type`（`text/*` 追加 `; charset=utf-8`）；
 //   - 其它上游头**一律不透传**（探针给上游加了 X-Custom-Probe，入站没有）；
 //   - **总是**加 `cache-control: no-cache`。
+//
+// ⚠️ 逐写 flush：`/v1/messages` 也可能返回 SSE（契约 §一：上游给 SSE 无论入站
+// `stream` 是什么都照样透传），必须让每段上游数据**到达即写出**。裸 `io.Copy`
+// 会把小帧攒在 net/http 的响应缓冲里（默认 2 KB），真实流式客户端（`curl -N`、
+// OpenAI SDK）会看到整段延迟到连接结束才出现。flush 只改**到达时机**，不碰任何
+// 字节，harness 的逐字节对照不受影响。
 func (g *Gateway) passthrough(w http.ResponseWriter, resp *http.Response) {
 	defer agent.DrainAndClose(resp)
 	ct := resp.Header.Get("Content-Type")
@@ -401,7 +407,11 @@ func (g *Gateway) passthrough(w http.ResponseWriter, resp *http.Response) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(resp.StatusCode)
 	if resp.Body != nil {
-		_, _ = io.Copy(w, resp.Body)
+		var dst io.Writer = w
+		if f, ok := w.(http.Flusher); ok {
+			dst = flushWriter{w: w, f: f}
+		}
+		_, _ = io.Copy(dst, resp.Body)
 	}
 }
 
