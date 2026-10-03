@@ -1,0 +1,869 @@
+{
+  "_about": "A5 管理侧出站全部捕获记录（脱敏、按到达顺序）",
+  "_captured": "2026-10-04",
+  "_excluded": {
+    "GET /api/v1/client/configs": 5,
+    "POST /api/v1/event/report": 8
+  },
+  "_excluded_note": "以上是同轮捕获但**不属 A5 范围**的请求（A4 的 client/configs 与 event/report），已在 A4 的 outbound 契约里覆盖，此处不重复收录。",
+  "records": [
+    {
+      "host": "zcode.z.ai",
+      "method": "POST",
+      "path": "/api/v1/oauth/cli/init",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Length": [
+          "18"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "User-Agent": [
+          "python-httpx/0.28.1"
+        ]
+      },
+      "req_body_text": "{\"provider\":\"zai\"}",
+      "resp_status": 200,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Encoding": [
+          "gzip"
+        ],
+        "Content-Type": [
+          "application/json; charset=utf-8"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:08 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Vary": [
+          "Accept-Encoding"
+        ],
+        "Via": [
+          "ens-cache58.l2nm125-7[10,0,DP], ens-cache19.cn6870[49,0,DP], ens-cache19.cn6870[51,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": "{\"code\":0,\"msg\":\"\",\"data\":{\"flow_id\": \"<redacted:value>\",\"poll_token\": \"<redacted:value>\",\"authorize_url\":\"https://chat.z.ai/api/oauth/authorize?client_id=client_P8X5CMWmlaRO9gyO-KSqtg\\u0026redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai\\u0026state=<redacted:state>\\u0026response_type=code\",\"expires_at\":1791063908,\"poll_interval_sec\":2},\"logid\": \"<redacted:value>\"}"
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/oauth/cli/poll/<redacted:flow-id>",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "User-Agent": [
+          "python-httpx/0.28.1"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 200,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Encoding": [
+          "gzip"
+        ],
+        "Content-Type": [
+          "application/json; charset=utf-8"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:08 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Vary": [
+          "Accept-Encoding"
+        ],
+        "Via": [
+          "ens-cache9.l2nm125-7[9,0,DP], ens-cache28.cn6870[48,0,DP], ens-cache28.cn6870[51,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": "{\"code\":0,\"msg\":\"\",\"data\":{\"status\":\"pending\"},\"logid\": \"<redacted:value>\"}"
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/oauth/cli/poll/<redacted:flow-id>",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "User-Agent": [
+          "python-httpx/0.28.1"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 200,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Encoding": [
+          "gzip"
+        ],
+        "Content-Type": [
+          "application/json; charset=utf-8"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:10 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Vary": [
+          "Accept-Encoding"
+        ],
+        "Via": [
+          "ens-cache26.l2nm125-7[10,0,DP], ens-cache20.cn6870[46,0,DP], ens-cache20.cn6870[49,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": "{\"code\":0,\"msg\":\"\",\"data\":{\"status\":\"pending\"},\"logid\": \"<redacted:value>\"}"
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/oauth/cli/poll/<redacted:flow-id>",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "User-Agent": [
+          "python-httpx/0.28.1"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 200,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Encoding": [
+          "gzip"
+        ],
+        "Content-Type": [
+          "application/json; charset=utf-8"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:13 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Vary": [
+          "Accept-Encoding"
+        ],
+        "Via": [
+          "ens-cache16.l2nm125-7[13,0,DP], ens-cache18.cn6870[54,0,DP], ens-cache18.cn6870[56,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": "{\"code\":0,\"msg\":\"\",\"data\":{\"status\":\"pending\"},\"logid\": \"<redacted:value>\"}"
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/zcode-plan/billing/balance",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Http-Referer": [
+          "https://zcode.z.ai"
+        ],
+        "User-Agent": [
+          "ZCode/3.14.4"
+        ],
+        "X-Client-Language": [
+          "ja-JP"
+        ],
+        "X-Client-Timezone": [
+          "Asia/Tokyo"
+        ],
+        "X-Device-Mid": [
+          "<redacted:device-mid>"
+        ],
+        "X-Os-Category": [
+          "macos"
+        ],
+        "X-Os-Version": [
+          "24.5.0"
+        ],
+        "X-Platform": [
+          "darwin-arm64"
+        ],
+        "X-Release-Channel": [
+          "stable"
+        ],
+        "X-Request-Id": [
+          "e00bdc1a-9877-44d9-b50a-2d18a853137b"
+        ],
+        "X-Title": [
+          "Z Code@electron"
+        ],
+        "X-Zcode-App-Version": [
+          "3.14.4"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 401,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Length": [
+          "0"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:15 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Via": [
+          "ens-cache43.l2nm125-7[9,0,DP], ens-cache7.cn6870[52,0,DP], ens-cache7.cn6870[54,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": ""
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/zcode-plan/usage",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Http-Referer": [
+          "https://zcode.z.ai"
+        ],
+        "User-Agent": [
+          "ZCode/3.14.4"
+        ],
+        "X-Client-Language": [
+          "ja-JP"
+        ],
+        "X-Client-Timezone": [
+          "Asia/Tokyo"
+        ],
+        "X-Device-Mid": [
+          "<redacted:device-mid>"
+        ],
+        "X-Os-Category": [
+          "macos"
+        ],
+        "X-Os-Version": [
+          "24.5.0"
+        ],
+        "X-Platform": [
+          "darwin-arm64"
+        ],
+        "X-Release-Channel": [
+          "stable"
+        ],
+        "X-Request-Id": [
+          "e00bdc1a-9877-44d9-b50a-2d18a853137b"
+        ],
+        "X-Title": [
+          "Z Code@electron"
+        ],
+        "X-Zcode-App-Version": [
+          "3.14.4"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 404,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Encoding": [
+          "gzip"
+        ],
+        "Content-Type": [
+          "text/plain"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:15 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Vary": [
+          "Accept-Encoding"
+        ],
+        "Via": [
+          "ens-cache28.l2nm125-7[8,0,DP], ens-cache2.cn6870[49,0,DP], ens-cache2.cn6870[52,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": "404 page not found"
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/zcode-plan/billing/current",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Http-Referer": [
+          "https://zcode.z.ai"
+        ],
+        "User-Agent": [
+          "ZCode/3.14.4"
+        ],
+        "X-Client-Language": [
+          "ja-JP"
+        ],
+        "X-Client-Timezone": [
+          "Asia/Tokyo"
+        ],
+        "X-Device-Mid": [
+          "<redacted:device-mid>"
+        ],
+        "X-Os-Category": [
+          "macos"
+        ],
+        "X-Os-Version": [
+          "24.5.0"
+        ],
+        "X-Platform": [
+          "darwin-arm64"
+        ],
+        "X-Release-Channel": [
+          "stable"
+        ],
+        "X-Request-Id": [
+          "e00bdc1a-9877-44d9-b50a-2d18a853137b"
+        ],
+        "X-Title": [
+          "Z Code@electron"
+        ],
+        "X-Zcode-App-Version": [
+          "3.14.4"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 401,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Length": [
+          "0"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:15 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Via": [
+          "ens-cache57.l2nm125-7[9,0,DP], ens-cache41.cn6870[49,0,DP], ens-cache41.cn6870[51,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": ""
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/zcode-plan/billing/current",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Http-Referer": [
+          "https://zcode.z.ai"
+        ],
+        "User-Agent": [
+          "ZCode/3.14.4"
+        ],
+        "X-Client-Language": [
+          "ja-JP"
+        ],
+        "X-Client-Timezone": [
+          "Asia/Tokyo"
+        ],
+        "X-Device-Mid": [
+          "<redacted:device-mid>"
+        ],
+        "X-Os-Category": [
+          "macos"
+        ],
+        "X-Os-Version": [
+          "24.5.0"
+        ],
+        "X-Platform": [
+          "darwin-arm64"
+        ],
+        "X-Release-Channel": [
+          "stable"
+        ],
+        "X-Request-Id": [
+          "230b05f9-4097-4c99-9361-5b8b09e06a05"
+        ],
+        "X-Title": [
+          "Z Code@electron"
+        ],
+        "X-Zcode-App-Version": [
+          "3.14.4"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 401,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Length": [
+          "0"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:27 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Via": [
+          "ens-cache27.l2nm125-7[11,0,DP], ens-cache11.cn6870[52,0,DP], ens-cache11.cn6870[54,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": ""
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/zcode-plan/billing/balance",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Http-Referer": [
+          "https://zcode.z.ai"
+        ],
+        "User-Agent": [
+          "ZCode/3.14.4"
+        ],
+        "X-Client-Language": [
+          "ja-JP"
+        ],
+        "X-Client-Timezone": [
+          "Asia/Tokyo"
+        ],
+        "X-Device-Mid": [
+          "<redacted:device-mid>"
+        ],
+        "X-Os-Category": [
+          "macos"
+        ],
+        "X-Os-Version": [
+          "24.5.0"
+        ],
+        "X-Platform": [
+          "darwin-arm64"
+        ],
+        "X-Release-Channel": [
+          "stable"
+        ],
+        "X-Request-Id": [
+          "230b05f9-4097-4c99-9361-5b8b09e06a05"
+        ],
+        "X-Title": [
+          "Z Code@electron"
+        ],
+        "X-Zcode-App-Version": [
+          "3.14.4"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 401,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Length": [
+          "0"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:27 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Via": [
+          "ens-cache14.l2nm125-7[11,0,DP], ens-cache42.cn6870[55,0,DP], ens-cache42.cn6870[56,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": ""
+    },
+    {
+      "host": "zcode.z.ai",
+      "method": "GET",
+      "path": "/api/v1/zcode-plan/usage",
+      "req_headers": {
+        "Accept": [
+          "*/*"
+        ],
+        "Accept-Encoding": [
+          "gzip, deflate"
+        ],
+        "Authorization": [
+          "<redacted:bearer>"
+        ],
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Http-Referer": [
+          "https://zcode.z.ai"
+        ],
+        "User-Agent": [
+          "ZCode/3.14.4"
+        ],
+        "X-Client-Language": [
+          "ja-JP"
+        ],
+        "X-Client-Timezone": [
+          "Asia/Tokyo"
+        ],
+        "X-Device-Mid": [
+          "<redacted:device-mid>"
+        ],
+        "X-Os-Category": [
+          "macos"
+        ],
+        "X-Os-Version": [
+          "24.5.0"
+        ],
+        "X-Platform": [
+          "darwin-arm64"
+        ],
+        "X-Release-Channel": [
+          "stable"
+        ],
+        "X-Request-Id": [
+          "230b05f9-4097-4c99-9361-5b8b09e06a05"
+        ],
+        "X-Title": [
+          "Z Code@electron"
+        ],
+        "X-Zcode-App-Version": [
+          "3.14.4"
+        ]
+      },
+      "req_body_text": null,
+      "resp_status": 404,
+      "resp_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Encoding": [
+          "gzip"
+        ],
+        "Content-Type": [
+          "text/plain"
+        ],
+        "Date": [
+          "Sat, 03 Oct 2026 21:40:27 GMT"
+        ],
+        "Eagleid": [
+          "<redacted:hex32>"
+        ],
+        "Server": [
+          "ESA"
+        ],
+        "Set-Cookie": [
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+          "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+          "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+        ],
+        "Timing-Allow-Origin": [
+          "*"
+        ],
+        "Vary": [
+          "Accept-Encoding"
+        ],
+        "Via": [
+          "ens-cache13.l2nm125-7[9,0,DP], ens-cache37.cn6870[49,0,DP], ens-cache37.cn6870[50,0]"
+        ],
+        "X-Request-Id": [
+          "<redacted:hex32>"
+        ],
+        "X-Site-Cache-Status": [
+          "DYNAMIC"
+        ]
+      },
+      "resp_body_text": "404 page not found"
+    }
+  ]
+}

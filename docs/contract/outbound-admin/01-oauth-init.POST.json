@@ -1,0 +1,82 @@
+{
+  "_about": "出站契约样本：网关的**管理面** → 上游。A5（额度/领取/登录）的实现依据。",
+  "_captured": "2026-10-04",
+  "_target": "dengyie/zcode2api（独立临时数据目录 + 注入的假 JWT 账号）",
+  "_method": "本地 MITM（tools/mitmupstream，自签 CA + 叶子证书终结 TLS）；靶机设 HTTPS_PROXY 与 SSL_CERT_FILE 指向本工具；管理侧出站同样走代理",
+  "route": "POST https://zcode.z.ai/api/v1/oauth/cli/init",
+  "method": "POST",
+  "request": {
+    "headers": {
+      "Accept": [
+        "*/*"
+      ],
+      "Accept-Encoding": [
+        "gzip, deflate"
+      ],
+      "Authorization": [
+        "<redacted:bearer>"
+      ],
+      "Connection": [
+        "keep-alive"
+      ],
+      "Content-Length": [
+        "18"
+      ],
+      "Content-Type": [
+        "application/json"
+      ],
+      "User-Agent": [
+        "python-httpx/0.28.1"
+      ]
+    },
+    "body_text": "{\"provider\":\"zai\"}"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Connection": [
+        "keep-alive"
+      ],
+      "Content-Encoding": [
+        "gzip"
+      ],
+      "Content-Type": [
+        "application/json; charset=utf-8"
+      ],
+      "Date": [
+        "Sat, 03 Oct 2026 21:40:08 GMT"
+      ],
+      "Eagleid": [
+        "<redacted:hex32>"
+      ],
+      "Server": [
+        "ESA"
+      ],
+      "Set-Cookie": [
+        "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+        "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+        "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+        "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+      ],
+      "Timing-Allow-Origin": [
+        "*"
+      ],
+      "Vary": [
+        "Accept-Encoding"
+      ],
+      "Via": [
+        "ens-cache58.l2nm125-7[10,0,DP], ens-cache19.cn6870[49,0,DP], ens-cache19.cn6870[51,0]"
+      ],
+      "X-Request-Id": [
+        "<redacted:hex32>"
+      ],
+      "X-Site-Cache-Status": [
+        "DYNAMIC"
+      ]
+    },
+    "body_text": "{\"code\":0,\"msg\":\"\",\"data\":{\"flow_id\": \"<redacted:value>\",\"poll_token\": \"<redacted:value>\",\"authorize_url\":\"https://chat.z.ai/api/oauth/authorize?client_id=client_P8X5CMWmlaRO9gyO-KSqtg\\u0026redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai\\u0026state=<redacted:state>\\u0026response_type=code\",\"expires_at\":1791063908,\"poll_interval_sec\":2},\"logid\": \"<redacted:value>\"}"
+  },
+  "notes": [
+    "由 tools/capture_admin_outbound.py 自动生成；取值已按 ../README.md 规则脱敏。上游响应为 gzip ⇒ 这里的 body_text 是解压后的明文。"
+  ]
+}

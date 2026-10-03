@@ -30,3 +30,7 @@
 .vscode/
 .DS_Store
 Thumbs.db
+
+# Python 采样工具的字节码缓存
+__pycache__/
+*.pyc

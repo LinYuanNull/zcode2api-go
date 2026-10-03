@@ -1,0 +1,106 @@
+{
+  "_about": "出站契约样本：网关的**管理面** → 上游。A5（额度/领取/登录）的实现依据。",
+  "_captured": "2026-10-04",
+  "_target": "dengyie/zcode2api（独立临时数据目录 + 注入的假 JWT 账号）",
+  "_method": "本地 MITM（tools/mitmupstream，自签 CA + 叶子证书终结 TLS）；靶机设 HTTPS_PROXY 与 SSL_CERT_FILE 指向本工具；管理侧出站同样走代理",
+  "route": "GET https://zcode.z.ai/api/v1/zcode-plan/billing/balance",
+  "method": "GET",
+  "request": {
+    "headers": {
+      "Accept": [
+        "*/*"
+      ],
+      "Accept-Encoding": [
+        "gzip, deflate"
+      ],
+      "Authorization": [
+        "<redacted:bearer>"
+      ],
+      "Connection": [
+        "keep-alive"
+      ],
+      "Content-Type": [
+        "application/json"
+      ],
+      "Http-Referer": [
+        "https://zcode.z.ai"
+      ],
+      "User-Agent": [
+        "ZCode/3.14.4"
+      ],
+      "X-Client-Language": [
+        "ja-JP"
+      ],
+      "X-Client-Timezone": [
+        "Asia/Tokyo"
+      ],
+      "X-Device-Mid": [
+        "<redacted:device-mid>"
+      ],
+      "X-Os-Category": [
+        "macos"
+      ],
+      "X-Os-Version": [
+        "24.5.0"
+      ],
+      "X-Platform": [
+        "darwin-arm64"
+      ],
+      "X-Release-Channel": [
+        "stable"
+      ],
+      "X-Request-Id": [
+        "e00bdc1a-9877-44d9-b50a-2d18a853137b"
+      ],
+      "X-Title": [
+        "Z Code@electron"
+      ],
+      "X-Zcode-App-Version": [
+        "3.14.4"
+      ]
+    },
+    "body_text": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "Connection": [
+        "keep-alive"
+      ],
+      "Content-Length": [
+        "0"
+      ],
+      "Date": [
+        "Sat, 03 Oct 2026 21:40:15 GMT"
+      ],
+      "Eagleid": [
+        "<redacted:hex32>"
+      ],
+      "Server": [
+        "ESA"
+      ],
+      "Set-Cookie": [
+        "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+        "cdn_sec_tc=<redacted:value>;path=/;HttpOnly;Max-Age=3600",
+        "acw_tc=<redacted:value>;path=/;HttpOnly;Max-Age=1800",
+        "visitor_id=<redacted:value>; Path=/; Max-Age=31536000; HttpOnly"
+      ],
+      "Timing-Allow-Origin": [
+        "*"
+      ],
+      "Via": [
+        "ens-cache43.l2nm125-7[9,0,DP], ens-cache7.cn6870[52,0,DP], ens-cache7.cn6870[54,0]"
+      ],
+      "X-Request-Id": [
+        "<redacted:hex32>"
+      ],
+      "X-Site-Cache-Status": [
+        "DYNAMIC"
+      ]
+    },
+    "body_text": ""
+  },
+  "notes": [
+    "由 tools/capture_admin_outbound.py 自动生成；取值已按 ../README.md 规则脱敏。上游响应为 gzip ⇒ 这里的 body_text 是解压后的明文。"
+  ]
+}

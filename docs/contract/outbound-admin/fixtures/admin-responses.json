@@ -1,0 +1,71 @@
+{
+  "_about": "A5 采样期间管理侧（入站）响应的旁录：本轮新出现的分支留证",
+  "_captured": "2026-10-04",
+  "records": [
+    {
+      "label": "login/start",
+      "status": 200,
+      "body_text": "{\"flow_id\": \"<redacted:value>\",\"authorize_url\":\"https://chat.z.ai/api/oauth/authorize?client_id=client_P8X5CMWmlaRO9gyO-KSqtg&redirect_uri=https://zcode.z.ai/api/v1/oauth/cli/callback/zai&state=<redacted:state>&response_type=code\",\"expires_in\":300}"
+    },
+    {
+      "label": "login/poll#1",
+      "status": 200,
+      "body_text": "{\"status\":\"pending\"}"
+    },
+    {
+      "label": "login/poll#2",
+      "status": 200,
+      "body_text": "{\"status\":\"pending\"}"
+    },
+    {
+      "label": "login/poll#3",
+      "status": 200,
+      "body_text": "{\"status\":\"pending\"}"
+    },
+    {
+      "label": "login/poll-unknown",
+      "status": 200,
+      "body_text": "{\"status\":\"expired\"}"
+    },
+    {
+      "label": "claim/captcha-config",
+      "status": 200,
+      "body_text": "{\"enabled\":true,\"scene_id\":\"11xygtvd\",\"region\":\"cn\",\"prefix\":\"no8xfe\"}"
+    },
+    {
+      "label": "accounts-add",
+      "status": 200,
+      "body_text": "{\"count\":1,\"ids\":[\"a5-jwt-probe-ef234ed1\"]}"
+    },
+    {
+      "label": "accounts/refresh(status=invalid→期望缓存)",
+      "status": 200,
+      "body_text": "{\"ok\":false,\"message\":\"凭证失效，请重新授权\",\"account\":{\"id\":\"a5-jwt-probe-ef234ed1\",\"name\":\"a5-jwt-probe\",\"provider\":\"zai\",\"mode\":\"jwt\",\"token_masked\":\"eyJhbGci…000000\",\"enabled\":true,\"status\":\"invalid\",\"quota\":{},\"plan\":{},\"plans\":[],\"use_count\":0,\"fail_count\":0,\"risk_strikes\":0,\"recent_results\":[],\"last_used_at\":null,\"last_checked_at\":1791063614.8403313,\"cooling_until\":null,\"last_error\":\"凭证失效，请重新授权\",\"created_at\":1791063614.669324,\"fingerprint\":{\"platform\":\"darwin\",\"arch\":\"arm64\",\"os_version\":\"24.5.0\",\"language\":\"ja-JP\",\"timezone\":\"Asia/Tokyo\",\"screen\":\"1728x1117\",\"device_mid\": \"<redacted:value>\"},\"install_id\": \"<redacted:value>\",\"installed_at\":null}}"
+    },
+    {
+      "label": "claim/preview",
+      "status": 200,
+      "body_text": "{\"preview\":[{\"account_id\":\"a5-jwt-probe-ef234ed1\",\"account_name\":\"a5-jwt-probe\",\"plans\":[],\"error\":\"凭证失效，请重新授权\",\"activated\":false,\"activation_error\":null}]}"
+    },
+    {
+      "label": "claim",
+      "status": 200,
+      "body_text": "{\"outcomes\":[{\"account_id\":\"a5-jwt-probe-ef234ed1\",\"account_name\":\"a5-jwt-probe\",\"ok\":false,\"message\":\"凭证失效，请重新授权\"}],\"summary\":{\"ok\":0,\"fail\":1}}"
+    },
+    {
+      "label": "claim/manual",
+      "status": 200,
+      "body_text": "{\"outcomes\":[{\"account_id\":\"a5-jwt-probe-ef234ed1\",\"account_name\":\"a5-jwt-probe\",\"ok\":false,\"message\":\"凭证失效，请重新授权\"}],\"summary\":{\"ok\":0,\"fail\":1}}"
+    },
+    {
+      "label": "accounts/refresh#1(status=active→期望新鲜)",
+      "status": 200,
+      "body_text": "{\"ok\":false,\"result\":{\"error\":\"凭证失效，请重新授权\"},\"account\":{\"id\":\"a5-jwt-probe-ef234ed1\",\"name\":\"a5-jwt-probe\",\"provider\":\"zai\",\"mode\":\"jwt\",\"token_masked\":\"eyJhbGci…000000\",\"enabled\":true,\"status\":\"invalid\",\"quota\":{},\"plan\":{},\"plans\":[],\"use_count\":0,\"fail_count\":0,\"risk_strikes\":0,\"recent_results\":[],\"last_used_at\":null,\"last_checked_at\":1791063626.6782343,\"cooling_until\":null,\"last_error\":\"凭证失效，请重新授权\",\"created_at\":1791063614.669324,\"fingerprint\":{\"platform\":\"darwin\",\"arch\":\"arm64\",\"os_version\":\"24.5.0\",\"language\":\"ja-JP\",\"timezone\":\"Asia/Tokyo\",\"screen\":\"1728x1117\",\"device_mid\": \"<redacted:value>\"},\"install_id\": \"<redacted:value>\",\"installed_at\":1791063616.655919}}"
+    },
+    {
+      "label": "accounts/refresh#2(已转 invalid→期望缓存)",
+      "status": 200,
+      "body_text": "{\"ok\":false,\"message\":\"凭证失效，请重新授权\",\"account\":{\"id\":\"a5-jwt-probe-ef234ed1\",\"name\":\"a5-jwt-probe\",\"provider\":\"zai\",\"mode\":\"jwt\",\"token_masked\":\"eyJhbGci…000000\",\"enabled\":true,\"status\":\"invalid\",\"quota\":{},\"plan\":{},\"plans\":[],\"use_count\":0,\"fail_count\":0,\"risk_strikes\":0,\"recent_results\":[],\"last_used_at\":null,\"last_checked_at\":1791063626.6782343,\"cooling_until\":null,\"last_error\":\"凭证失效，请重新授权\",\"created_at\":1791063614.669324,\"fingerprint\":{\"platform\":\"darwin\",\"arch\":\"arm64\",\"os_version\":\"24.5.0\",\"language\":\"ja-JP\",\"timezone\":\"Asia/Tokyo\",\"screen\":\"1728x1117\",\"device_mid\": \"<redacted:value>\"},\"install_id\": \"<redacted:value>\",\"installed_at\":1791063616.655919}}"
+    }
+  ]
+}
