@@ -288,8 +288,9 @@ func (s *Scheduler) retryServerError(ctx context.Context, req Request, acct mode
 		agent.DrainAndClose(resp)
 	}
 	// 5xx 耗尽 ⇒ 冷却 300s。last_error 比 recent detail 多「上游 」前缀（实测差异）。
+	// 文案里 `冷却 300s` **没有**空格（harness upstream-500 对照，2026-10-04）。
 	detail := fmt.Sprintf("HTTP %d 重试 %d 次耗尽，冷却", code, serverRetries)
-	marks.Notice(s.marks, req.ReqID, "账号 %s 上游 %d 重试耗尽，冷却 %d s，切换下一个",
+	marks.Notice(s.marks, req.ReqID, "账号 %s 上游 %d 重试耗尽，冷却 %ds，切换下一个",
 		acct.Name, code, int(cooldownDuration/time.Second))
 	s.markFailure(acct, constants.StatusCooling, "上游 "+detail, detail)
 	return Result{}, false

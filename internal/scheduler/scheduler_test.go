@@ -331,7 +331,8 @@ func TestServerErrorRetries(t *testing.T) {
 	if got := rec.count("5s 后重试（"); got != 6 {
 		t.Errorf("5s 重试行 %d 条, 想要 6 条（2 账号 × 3）:\n%s", got, rec.joined())
 	}
-	if got := rec.count("冷却 300 s，切换下一个"); got != 2 {
+	// 文案 `冷却 300s` **没有**空格（harness upstream-500 对照实测）。
+	if got := rec.count("冷却 300s，切换下一个"); got != 2 {
 		t.Errorf("冷却耗尽行 %d 条, 想要 2 条:\n%s", got, rec.joined())
 	}
 	if rec.count("1s 后重试") != 0 {

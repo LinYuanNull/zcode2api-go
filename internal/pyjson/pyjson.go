@@ -161,6 +161,47 @@ func NewNumber(text string) *Value { return &Value{kind: Number, num: text} }
 // NewObject 建一个空对象。
 func NewObject() *Value { return &Value{kind: Object, obj: map[string]*Value{}} }
 
+// Truthy 复现 Python 的真值判定 `bool(x)`。
+//
+// 需要它的原因：路由日志 `>>>` 的第 3 字段与 `/v1/chat/completions` 的响应形状
+// 都用真值判定，而 JSON 值可以是任意类型（实测：`"false"` / `1` / `[0]` 都是真值，
+// `0` / `""` / `[]` / `{}` / `null` 都是假值）。
+func Truthy(v *Value) bool {
+	switch {
+	case v == nil || v.IsNull():
+		return false
+	case v.IsBool():
+		return v.Bool()
+	case v.IsNumber():
+		return numberTruthy(v.NumberText())
+	case v.IsString():
+		return v.String() != ""
+	case v.IsArray():
+		return v.Len() > 0
+	case v.IsObject():
+		return len(v.Keys()) > 0
+	}
+	return false
+}
+
+// numberTruthy 判定 Python 数字的真值（`0` / `0.0` / `-0.0` 为假，其余为真，
+// `NaN` 为真）。
+//
+// 传入的是**已归一化**的 Python 输出文本（见 normalizeNumber）：
+//   - 整数形（无 `.` / `e`）：`"0"` 假；任意长整数经 ParseFloat 溢出成 ±Inf ⇒ 真；
+//   - 浮点形：`"0.0"` / `"-0.0"` 假，`"NaN"` 真（`NaN != 0` 为 true），`"Infinity"` 真。
+func numberTruthy(text string) bool {
+	f, err := strconv.ParseFloat(text, 64)
+	if err != nil {
+		var ne *strconv.NumError
+		if !(asNumError(err, &ne) && ne.Err == strconv.ErrRange) {
+			return true // 不该发生（文本已归一化）；保守当真值
+		}
+		// 溢出 → ±Inf（真值）；下溢 → 0（假值，Python 同样是 0.0）。
+	}
+	return f != 0
+}
+
 // Parse 解析 JSON，保留对象键序，并按 Python 规则规范化数字。
 func Parse(raw []byte) (*Value, error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -355,9 +396,19 @@ func formatPyFloat(f float64) string {
 }
 
 // Marshal 按 Python `json.dumps(..., ensure_ascii=False)` 的形态编码。
-func (v *Value) Marshal() []byte { return v.appendTo(nil) }
+//
+// 分隔符是 Python 的**默认值** `", "` / `": "`（带空格）—— 出站请求体、
+// SSE 数据行都用这个形态。
+func (v *Value) Marshal() []byte { return v.appendTo(nil, ", ", ": ") }
 
-func (v *Value) appendTo(dst []byte) []byte {
+// MarshalCompact 按 `json.dumps(..., separators=(",", ":"))` 编码（无空格）。
+//
+// 用于 **Starlette `JSONResponse`** 形态的响应体：`/v1/chat/completions` 的
+// 非流式 200（实测 `{"id":"msg_harness","object":"chat.completion",…}` 无空格）。
+// 与 `Marshal` 的差别**只在分隔符**，转义/数字规则完全一致。
+func (v *Value) MarshalCompact() []byte { return v.appendTo(nil, ",", ":") }
+
+func (v *Value) appendTo(dst []byte, itemSep, kvSep string) []byte {
 	if v == nil {
 		return append(dst, "null"...)
 	}
@@ -377,20 +428,20 @@ func (v *Value) appendTo(dst []byte) []byte {
 		dst = append(dst, '[')
 		for i, e := range v.arr {
 			if i > 0 {
-				dst = append(dst, ',', ' ')
+				dst = append(dst, itemSep...)
 			}
-			dst = e.appendTo(dst)
+			dst = e.appendTo(dst, itemSep, kvSep)
 		}
 		return append(dst, ']')
 	case Object:
 		dst = append(dst, '{')
 		for i, k := range v.keys {
 			if i > 0 {
-				dst = append(dst, ',', ' ')
+				dst = append(dst, itemSep...)
 			}
 			dst = appendPyString(dst, k)
-			dst = append(dst, ':', ' ')
-			dst = v.obj[k].appendTo(dst)
+			dst = append(dst, kvSep...)
+			dst = v.obj[k].appendTo(dst, itemSep, kvSep)
 		}
 		return append(dst, '}')
 	}

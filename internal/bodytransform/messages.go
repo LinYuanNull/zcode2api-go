@@ -32,7 +32,6 @@ package bodytransform
 
 import (
 	"errors"
-	"strconv"
 
 	"github.com/LinYuanNull/zcode2api-go/internal/pyjson"
 )
@@ -113,7 +112,7 @@ func Inspect(raw []byte) (RequestInfo, error) {
 	}
 
 	if s, ok := root.Get("stream"); ok {
-		info.Stream = pyTruthy(s)
+		info.Stream = PyTruthy(s)
 	}
 
 	info.Preview = routeLogPreview(root)
@@ -188,45 +187,12 @@ func previewOf(content *pyjson.Value) (string, bool) {
 	return "", false
 }
 
-// pyTruthy 复现 Python 的真值判定（`bool(x)`）。
+// PyTruthy 复现 Python 的真值判定（`bool(x)`）—— 是 pyjson.Truthy 的别名。
 //
-// 需要它的原因：`>>>` 行第 3 字段与 `/v1/chat/completions` 的响应形状都用真值判定，
-// 而 JSON 值可以是任意类型（探针 p-stream-* 系列：`"false"` / `1` / `[0]` 都是真值，
-// `0` / `""` / `[]` / `{}` / `null` 都是假值）。
-func pyTruthy(v *pyjson.Value) bool {
-	switch {
-	case v == nil || v.IsNull():
-		return false
-	case v.IsBool():
-		return v.Bool()
-	case v.IsNumber():
-		return numberTruthy(v.NumberText())
-	case v.IsString():
-		return v.String() != ""
-	case v.IsArray():
-		return v.Len() > 0
-	case v.IsObject():
-		return len(v.Keys()) > 0
-	}
-	return false
-}
-
-// numberTruthy 判定 Python 数字的真值（`0` / `0.0` / `-0.0` 为假，其余为真）。
-//
-// 传入的是**已归一化**的 Python 输出文本（见 pyjson.normalizeNumber）：
-//   - 整数形（无 `.` / `e`）：`"0"` 假；任意长整数经 ParseFloat 溢出成 ±Inf ⇒ 真（与 Python 一致）；
-//   - 浮点形：`"0.0"` / `"-0.0"` 假，`"NaN"` 真（NaN != 0 为 true），`"Infinity"` 真。
-func numberTruthy(text string) bool {
-	f, err := strconv.ParseFloat(text, 64)
-	if err != nil {
-		var ne *strconv.NumError
-		if !(errors.As(err, &ne) && ne.Err == strconv.ErrRange) {
-			return true // 不该发生（文本已归一化）；保守当真值
-		}
-		// 溢出 → ±Inf（真值）；下溢 → 0（假值，Python 同样是 0.0）。
-	}
-	return f != 0
-}
+// `/v1/messages` 与 `/v1/chat/completions` 都用它：前者判 `>>>` 第 3 字段，
+// 后者判流式/非流式与是否把 `stream: true` 写进出站体（实测 `stream:"false"`
+// 是真值 ⇒ 出站 `"stream": true`）。
+func PyTruthy(v *pyjson.Value) bool { return pyjson.Truthy(v) }
 
 // parseObjectBody 解析请求体并要求根是对象。
 func parseObjectBody(raw []byte) (*pyjson.Value, error) {
@@ -239,6 +205,16 @@ func parseObjectBody(raw []byte) (*pyjson.Value, error) {
 	}
 	return root, nil
 }
+
+// WrapMessageContents 就地改写 `messages[].content` 里的字符串值。
+//
+// 这条规则**两个入口共用**（`/v1/messages` 保序改写与 `/v1/chat/completions`
+// 重建都做同样的包装，见 fixtures/chat-completions-requests.json
+// `_observations` 第 2 条），所以在此导出给 compat 复用，避免两处规则漂移。
+//
+// 只在 `messages` **是数组**、元素**是对象**、`content` **是字符串**时才动；
+// 其余形态一律原样（实测：`messages` 是对象、`content` 是数字 / null 时参考实现都原样转发）。
+func WrapMessageContents(root *pyjson.Value) { wrapStringContents(root) }
 
 // wrapStringContents 就地改写 `messages[].content` 里的字符串值。
 //

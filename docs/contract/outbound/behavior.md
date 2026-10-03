@@ -34,6 +34,9 @@
 | `cache-control: no-cache` | 正常响应路径**总是**加上（客户端错透传分支除外，见下行）。 |
 | `server` / `date` / `transfer-encoding` | uvicorn 自己加的，不是实现的行为。 |
 | 「客户端错」透传分支的响应头 | **只有** Content-Type（照搬+charset 规则同上），**没有** `cache-control` —— no-cache 只加在正常响应路径（harness `upstream-400` 对照实测，2026-10-04）。 |
+| `/v1/chat/completions` **非流式** 200 | `Content-Type: application/json`（**不是**照搬上游），**没有** `cache-control`（harness `ok-openai` 对照实测：靶机非流式 chat 响应只有 content-type）。 |
+| `/v1/chat/completions` **流式** 200 | `Content-Type: text/event-stream; charset=utf-8` + `cache-control: no-cache`（harness `ok-openai-stream`）。 |
+| `/v1/chat/completions` **502** | `Content-Type: application/json`，**没有** `cache-control`（harness `chat-sse-on-nonstream`）。 |
 
 **`/v1/chat/completions` 必须解析**（`stream` 用**真值**判定，见 §3.0 末）：
 
@@ -60,27 +63,50 @@
 {"id":"msg_harness","object":"chat.completion","created":1791052708,"model":"GLM-5.3","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}
 ```
 
-- `id` = 上游 `id`；`created` = 当前 unix 秒；`model` = 上游 `model`。
+- `id` = 上游 `id`；`created` = 当前 unix 秒；`model` = **上游 message 的 `model`**（缺键 ⇒ `null`）。
+  ⚠️ 与流式路径口径**不同**：流式帧的 `model` 取**入站请求的 `model`** —— 首帧在解析任何事件
+  **之前**就要写 model，且上游给 JSON 体时根本不解事件（见 §2.2）。样本里两者相同、不可区分，
+  但两条路径的来源确实不同，实现要照实分开（`ok-openai` vs `chat-stream-from-json` 对照）。
 - `choices[0].message.content` = **把所有 text 块拼起来**。
-- `finish_reason`：`end_turn` → `"stop"`。
+- `finish_reason`：`end_turn` → `"stop"`（**实测**）；`stop_sequence` → `"stop"`、
+  `max_tokens` → `"length"`、`tool_use` → `"tool_calls"`、`stop_reason` 缺失/`null` ⇒ `null`、
+  未知取值**原样透出**（这几条**未采样**，按两家公开规范对齐，登记在 §六）。
 - `usage`：`prompt_tokens`←`input_tokens`、`completion_tokens`←`output_tokens`、`total_tokens` = 两者之和。
-- **序列化用紧凑分隔符**（`,` / `:` 后无空格）。
+- **序列化用紧凑分隔符**（`,` / `:` 后无空格）—— 这是 Starlette `JSONResponse` 的形态，
+  与出站请求体/SSE 帧的「默认分隔符（带空格）」**不同**。
 
 ### 2.2 `/v1/chat/completions` 流式（**带空格的 JSON**）
 
-逐帧 `data: <json>\n\n`（**没有 `event:` 行**），且 **JSON 是默认分隔符（`", "` / `": "`）**：
+入站 `stream` 为**真值**时走这里。逐帧 `data: <json>\n\n`（**没有 `event:` 行**），
+且 **JSON 是默认分隔符（`", "` / `": "`）**：
 
 ```
-data: {"id": "chatcmpl-<16位hex>", "object": "chat.completion.chunk", "created": <ts>, "model": "<model>", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]}
+data: {"id": "chatcmpl-<24位hex>", "object": "chat.completion.chunk", "created": <ts>, "model": "<入站model>", "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": null}]}
 
-data: {"id": "<上游 msg id>", "object": "chat.completion.chunk", "created": <ts>, "model": "<model>", "choices": [{"index": 0, "delta": {"content": "hello"}, "finish_reason": null}]}
+data: {"id": "<上游 msg id>", "object": "chat.completion.chunk", "created": <ts>, "model": "<入站model>", "choices": [{"index": 0, "delta": {"content": "hello"}, "finish_reason": null}]}
 
-data: {"id": "<上游 msg id>", …, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens":…,"completion_tokens":…,"total_tokens":…}}
+data: {"id": "<上游 msg id>", "object": "chat.completion.chunk", "created": <ts>, "model": "<入站model>", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}}
+
+data: [DONE]
+
 ```
 
-- **首帧的 `id` 是新生成的 `chatcmpl-<16位hex>`**（不是上游 id）；**后续帧用上游 `id`**。
+- **首帧的 `id` 是新生成的 `chatcmpl-<24位hex>`**（不是上游 id）；**后续帧用上游 `id`**
+  （即 `message_start.message.id`）。
 - `created` 在整个流里是同一个值（首帧时取的 unix 秒）。
-- 末帧 `delta` 为空对象 + `finish_reason` + `usage`。
+- `model` 取**入站请求的 model**（见 §2.1 的 ⚠️）。
+- **末帧在收到 `message_delta` 时才发出**，不是循环结束后补 —— `delta` 空对象 +
+  `finish_reason`（由 `delta.stop_reason` 映射，同 §2.1）+ `usage`。
+- **`data: [DONE]\n\n` 是流的最后一帧**。
+- 事件映射（逐条实测，`ok-openai-stream`）：
+  `message_start` → 只**记** `message.id` 与 `message.usage.input_tokens`（不发帧）；
+  `content_block_delta` → 内容帧（`delta.text` 为真值时；空串不发）；
+  `message_delta` → 末帧（`usage.output_tokens` 作 `completion_tokens`）；
+  `content_block_start` / `content_block_stop` / `message_stop` → **不发帧**。
+  `total_tokens` = `prompt_tokens` + `completion_tokens`。
+- **上游给 JSON 体（不是 SSE）时**：逐行扫不到 `data: ` 行 ⇒ **只发首帧 + `[DONE]`**，
+  两帧、**不报错**（`chat-stream-from-json` 实测 len=240）。这也是「首帧 model 必取入站值」
+  的证据 —— 那条路径根本没有上游 model 可读。
 
 ## 三、上游错误分类与状态机（**全部实测**）
 
@@ -213,8 +239,8 @@ data: {"id": "<上游 msg id>", …, "choices": [{"index": 0, "delta": {}, "fini
   ⇒ 走客户端错透传」处理（见 3.2 末注），并把该选择登记在此，而不是当成已知默认值。
 - **`Retry-After` 不是整数**（如 HTTP-date 形态）时的行为。
 - **`/v1/chat/completions` 的入站字段映射**：`role: system` 怎么处理、`tools` / `temperature` /
-  `stop` 等 OpenAI 字段是否搬运、`max_tokens` 缺失时的默认值 —— **均未采样**
-  （清单见 `fixtures/chat-completions-requests.json` 的 `_gaps`）。
+  `stop` 等 OpenAI 字段是否搬运 —— **均未采样**（清单见 `fixtures/chat-completions-requests.json`
+  的 `_gaps`）。A4 的落地口径见 §六之三。
 - **上游没有 `Content-Type` 响应头时**的入站 `Content-Type`（假上游总会带一个，测不出）。
 
 ## 六之二、**有意偏离**（参考实现是缺陷，本实现不照抄）
@@ -238,3 +264,29 @@ data: {"id": "<上游 msg id>", …, "choices": [{"index": 0, "delta": {}, "fini
 > `messages` 缺失 / 不是数组、`content` 是数字 / `null` 时**原样转发不改写**（形状探针）；
 > `>>>` 行第 4 字段是**最后一条 `role=="user"`** 的首段文本（§3.0，此前记成「首条」是错的）；
 > `/v1/messages` 的响应头只搬上游 `Content-Type`（§一，探针 `h-*`）。
+> **`/v1/chat/completions` 的响应转换与 SSE 转换本轮也全部实测**：非流式紧凑 JSON（含
+> 键序）、流式四帧序列（首帧新 id、末帧 `usage`、`data: [DONE]`）、上游给 JSON 体时只发
+> 首帧 + `[DONE]`、入站 `stream` 假值 + 上游 SSE/非 JSON ⇒ 502 —— 见 §2.1/§2.2 与
+> `internal/compat/chat_test.go`、`internal/gateway/chat_test.go`。
+
+## 六之三、`/v1/chat/completions` 重建的落地口径（A4，**未采样**处的选择）
+
+出站重建是**白名单**：只写 `model, messages, max_tokens`（+ 真值 `stream` 追加末尾），
+其余入站字段（`temperature` / `top_p` / `tools` / `n` / `system` …）**一律丢弃**。
+这是由「重建」语义 + 三条实测配对推出的确定行为，不是猜测。以下**具体边界**未采样，
+列出本实现的选择（都可被将来的一条新探针推翻）：
+
+| 边界 | 本实现的选择 | 依据 / 备注 |
+|---|---|---|
+| `model` / `messages` / `max_tokens` **缺失** | 写 `null`（保留键位） | Python `body.get(key)` → `None` 的形态；三条实测配对里三个键都在，缺键未采样 |
+| `messages[].content` 是字符串 | 包成 `[{"type":"text","text":…}]` | **已实测**（与 `/v1/messages` 同一规则，`c-string`/`ok-openai` 配对） |
+| `stop_reason` 非 `end_turn` | `stop_sequence`→`stop`、`max_tokens`→`length`、`tool_use`→`tool_calls`、缺失/`null`⇒`null`、未知**原样透出** | 只有 `end_turn→stop` 实测；其余按两家公开规范对齐 |
+| token 数是**非整数** | 截断取整（`3.0` → `3`） | 实测都是整数；非整数未采样 |
+| 上游 `data: ` 行是**非法 JSON** | **跳过**该行（不中断、不报错） | 假上游总给合法 JSON，未采样 |
+| 上游 `content` 本身是**字符串** | 直接当文本用 | 未采样（规范里 `content` 是块数组） |
+| 上游 200 但根**不是对象**（如 `[1,2]`） | 502 `上游响应格式异常` | 参考实现在此会未处理异常（`.get` on list）；本实现按铁律明确报错 |
+
+> 这条与 §六之二的区别：§六之二是「参考实现会**崩溃**」的分支（本实现改为明确拒绝）；
+> 这里是「参考实现**能跑**、只是没采到样本」的分支（本实现按最接近的已知语义实现，
+> 并把选择登记在此，不冒充实测）。
+

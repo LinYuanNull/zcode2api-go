@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/LinYuanNull/zcode2api-go/internal/agent"
 	"github.com/LinYuanNull/zcode2api-go/internal/authadmin"
 	"github.com/LinYuanNull/zcode2api-go/internal/bodytransform"
+	"github.com/LinYuanNull/zcode2api-go/internal/compat"
 	"github.com/LinYuanNull/zcode2api-go/internal/httpx"
 	"github.com/LinYuanNull/zcode2api-go/internal/marks"
 	"github.com/LinYuanNull/zcode2api-go/internal/models"
@@ -131,9 +133,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/messages":
 		g.handleMessagesPath(w, r, badJSONTypeMessages)
 	case "/v1/chat/completions":
-		// chat 入口的转发语义（OpenAI 重建 / 形状转换）属 A4 后续（#145）；
-		// 当前已实现的分支与 messages 完全一致地复用，**重建部分到位后再分叉**。
-		g.handleMessagesPath(w, r, badJSONTypeChat)
+		// chat 入口的转发语义与 messages **完全不同**：出站白名单重建、
+		// 响应必须解析成 OpenAI 形状（见 internal/compat 的包注释）。
+		g.handleChatPath(w, r)
 	default:
 		httpx.WriteDetail(w, http.StatusNotFound, "Not Found")
 	}
@@ -171,7 +173,7 @@ func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-// handleMessagesPath 是两个转发入口的共同路径。
+// handleMessagesPath 是 `/v1/messages` 的转发路径。
 //
 // 分支顺序（每一步都由样本/探针钉死）：
 //
@@ -182,37 +184,8 @@ func (g *Gateway) authorize(w http.ResponseWriter, r *http.Request) bool {
 // 「（无该行）」。model 非串也**不打**（参考实现连 `>>>` 都没打就 500 了；
 // 本实现按 §六之二改为 400，保持「拒绝发生在记号之前」的顺序）。
 func (g *Gateway) handleMessagesPath(w http.ResponseWriter, r *http.Request, badJSONType int) {
-	if r.Method != http.MethodPost {
-		g.methodNotAllowed(w)
-		return
-	}
-	if !g.authorize(w, r) {
-		return
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
-	if err != nil || !json.Valid(bytes.TrimSpace(raw)) {
-		g.writeBadJSON(w, badJSONType)
-		return
-	}
-
-	// 合法 JSON 但根不是对象 ⇒ 400（两入口同型，样本 26）。
-	// 这条必须在 `>>>` 之前：探针记录该分支没有 `>>>` 行。
-	info, ierr := bodytransform.Inspect(raw)
-	if errors.Is(ierr, bodytransform.ErrNotObject) {
-		httpx.WriteJSON(w, http.StatusBadRequest, errorEnvelope{errorBody{msgNotObject, typeNotObject}})
-		return
-	}
-	if errors.Is(ierr, bodytransform.ErrModelNotString) {
-		// §六之二「有意偏离」：参考实现这里是 500 崩溃（连 `>>>` 都不打）。
-		// 本实现改为 400 + 明确文案，同样不打 `>>>`（保持「拒绝在记号之前」）。
-		httpx.WriteJSON(w, http.StatusBadRequest, errorEnvelope{
-			errorBody{ierr.Error(), typeBadJSONChat}})
-		return
-	}
-	if ierr != nil {
-		// 解析层其它错误：按非法 JSON 处理（bodytransform 的 Parse 只会在
-		// 截断/深层嵌套等场景失败，json.Valid 已排除绝大多数）。
-		g.writeBadJSON(w, badJSONType)
+	info, raw, ok := g.readAndInspect(w, r, badJSONType)
+	if !ok {
 		return
 	}
 
@@ -222,10 +195,7 @@ func (g *Gateway) handleMessagesPath(w http.ResponseWriter, r *http.Request, bad
 	// 出站体：/v1/messages 保持入站键序，只改写字符串 content。
 	outbound, terr := bodytransform.Messages(raw)
 	if terr != nil {
-		// Inspect 已通过而 Messages 失败只可能是并发体损坏（不可能发生，
-		// raw 是本请求独占的）；防御式处理，不伪造成功。
-		httpx.WriteJSON(w, http.StatusInternalServerError, errorEnvelope{
-			errorBody{"出站体变换失败", typeBadJSONChat}})
+		g.writeTransformFailure(w)
 		return
 	}
 
@@ -243,9 +213,165 @@ func (g *Gateway) handleMessagesPath(w http.ResponseWriter, r *http.Request, bad
 		g.writeUpstreamError(w, res)
 	default:
 		// 池空 / 全失败 ⇒ 503（文案与 type 逐字取自样本）。
-		httpx.WriteJSON(w, http.StatusServiceUnavailable,
-			errorEnvelope{errorBody{msgNoAccount, typeNoAccount}})
+		g.writeNoAccount(w)
 	}
+}
+
+// handleChatPath 是 `/v1/chat/completions` 的转发路径。
+//
+// 与 `handleMessagesPath` 的两点本质区别：
+//
+//  1. **出站体是白名单重建**（键序固定 `model, messages, max_tokens[, stream]`），
+//     不是保序改写 —— 见 compat.RebuildChatRequest。
+//  2. **响应必须解析**：入站 `stream` 真值 ⇒ OpenAI SSE；假值 ⇒ 上游必须是
+//     JSON message，转成 OpenAI `chat.completion`，否则 502 `上游响应格式异常`。
+func (g *Gateway) handleChatPath(w http.ResponseWriter, r *http.Request) {
+	info, raw, ok := g.readAndInspect(w, r, badJSONTypeChat)
+	if !ok {
+		return
+	}
+
+	reqID := marks.ReqID()
+	marks.Route(g.marksWriter(), reqID, info.ModelLabel(), info.StreamLabel(), info.Preview)
+
+	outbound, terr := compat.RebuildChatRequest(raw, info.Stream)
+	if terr != nil {
+		g.writeTransformFailure(w)
+		return
+	}
+
+	res := g.sched.Do(r.Context(), scheduler.Request{
+		Body:  outbound,
+		ReqID: reqID,
+		Model: info.Model,
+	})
+
+	switch res.Outcome {
+	case scheduler.OutcomeSuccess:
+		if info.Stream {
+			g.writeChatStream(w, res.Resp, info.Model)
+		} else {
+			g.writeChatJSON(w, res.Resp)
+		}
+	case scheduler.OutcomeClientError:
+		g.writeUpstreamError(w, res)
+	default:
+		g.writeNoAccount(w)
+	}
+}
+
+// readAndInspect 是两个转发入口的共同前段：
+//
+//	方法 → 鉴权 → 读体 → 非法 JSON(400) → 非对象(400) → model 非串(400)
+//
+// 返回 ok=false 表示响应已写出，调用方应直接返回（**不要**再打 `>>>`）。
+func (g *Gateway) readAndInspect(w http.ResponseWriter, r *http.Request, badJSONType int) (bodytransform.RequestInfo, []byte, bool) {
+	if r.Method != http.MethodPost {
+		g.methodNotAllowed(w)
+		return bodytransform.RequestInfo{}, nil, false
+	}
+	if !g.authorize(w, r) {
+		return bodytransform.RequestInfo{}, nil, false
+	}
+	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
+	if err != nil || !json.Valid(bytes.TrimSpace(raw)) {
+		g.writeBadJSON(w, badJSONType)
+		return bodytransform.RequestInfo{}, nil, false
+	}
+
+	// 合法 JSON 但根不是对象 ⇒ 400（两入口同型，样本 26）。
+	// 这条必须在 `>>>` 之前：探针记录该分支没有 `>>>` 行。
+	info, ierr := bodytransform.Inspect(raw)
+	if errors.Is(ierr, bodytransform.ErrNotObject) {
+		httpx.WriteJSON(w, http.StatusBadRequest, errorEnvelope{errorBody{msgNotObject, typeNotObject}})
+		return bodytransform.RequestInfo{}, nil, false
+	}
+	if errors.Is(ierr, bodytransform.ErrModelNotString) {
+		// §六之二「有意偏离」：参考实现这里是 500 崩溃（连 `>>>` 都不打）。
+		// 本实现改为 400 + 明确文案，同样不打 `>>>`（保持「拒绝在记号之前」）。
+		httpx.WriteJSON(w, http.StatusBadRequest, errorEnvelope{
+			errorBody{ierr.Error(), typeBadJSONChat}})
+		return bodytransform.RequestInfo{}, nil, false
+	}
+	if ierr != nil {
+		// 解析层其它错误：按非法 JSON 处理（bodytransform 的 Parse 只会在
+		// 截断/深层嵌套等场景失败，json.Valid 已排除绝大多数）。
+		g.writeBadJSON(w, badJSONType)
+		return bodytransform.RequestInfo{}, nil, false
+	}
+	return info, raw, true
+}
+
+// writeTransformFailure 是「Inspect 已通过而出站体变换失败」的兜底。
+//
+// 不可能发生在正常路径（raw 是本请求独占的，Inspect 已经解析成功过一次）；
+// 防御式处理，**不伪造成功**。
+func (g *Gateway) writeTransformFailure(w http.ResponseWriter) {
+	httpx.WriteJSON(w, http.StatusInternalServerError, errorEnvelope{
+		errorBody{"出站体变换失败", typeBadJSONChat}})
+}
+
+// writeNoAccount 写「池空 / 全失败」的 503（文案与 type 逐字取自样本）：
+// `{"error":{"message":"所有账号均不可用…","type":"no_available_account"}}`。
+func (g *Gateway) writeNoAccount(w http.ResponseWriter) {
+	httpx.WriteJSON(w, http.StatusServiceUnavailable,
+		errorEnvelope{errorBody{msgNoAccount, typeNoAccount}})
+}
+
+// writeChatJSON 把上游 Anthropic message 转成 OpenAI `chat.completion`。
+//
+// ⚠️ **不加 `cache-control`**（harness `ok-openai` 对照实测：靶机非流式 chat
+// 响应只有 `content-type`；no-cache 只加在 SSE 与 `/v1/messages` 透传上）。
+func (g *Gateway) writeChatJSON(w http.ResponseWriter, resp *http.Response) {
+	defer agent.DrainAndClose(resp)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		body = nil
+	}
+	out, cerr := compat.ToOpenAIResponse(body, time.Now())
+	if cerr != nil {
+		g.writeUpstreamFormatError(w)
+		return
+	}
+	w.Header().Set("Content-Type", httpx.ContentTypeJSON)
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(out)
+}
+
+// writeChatStream 把上游响应（Anthropic SSE 或单个 message JSON）转成 OpenAI SSE。
+//
+// 与 messages 透传的区别：内容被**逐帧转换**，且**带 `cache-control: no-cache`**
+// （harness `ok-openai-stream` 对照实测）。每帧写后 flush，保证真实流式体验。
+func (g *Gateway) writeChatStream(w http.ResponseWriter, resp *http.Response, model string) {
+	defer agent.DrainAndClose(resp)
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(resp.StatusCode)
+
+	var dst io.Writer = w
+	if f, ok := w.(http.Flusher); ok {
+		dst = flushWriter{w: w, f: f}
+	}
+	_ = compat.StreamOpenAI(dst, resp.Body, model, time.Now())
+}
+
+// writeUpstreamFormatError 是 `/v1/chat/completions` 解析不出上游 message 时的 502
+// （判据见 compat.ErrUpstreamFormat；**不加** cache-control，与实测一致）。
+func (g *Gateway) writeUpstreamFormatError(w http.ResponseWriter) {
+	httpx.WriteJSON(w, http.StatusBadGateway,
+		errorEnvelope{errorBody{compat.ErrUpstreamFormat.Error(), "upstream_error"}})
+}
+
+// flushWriter 每次写后 flush，让 SSE 帧即时到达客户端。
+type flushWriter struct {
+	w io.Writer
+	f http.Flusher
+}
+
+func (fw flushWriter) Write(p []byte) (int, error) {
+	n, err := fw.w.Write(p)
+	fw.f.Flush()
+	return n, err
 }
 
 // writeBadJSON 按入口写非法 JSON 错误。
