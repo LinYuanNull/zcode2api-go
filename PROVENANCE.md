@@ -204,7 +204,50 @@ A2 把**这份部署 `.env` 的取值**当成了**代码默认值**，两条都�
 CI run [`37141410784`](https://github.com/LinYuanNull/zcode2api-go/actions/runs/37141410784) **success**
 （CI 已加「契约键序」步骤：`python3 tools/spec_reorder.py --check`）。
 
-## 已知未覆盖的分支（后续采样时补）
+## 转发链路实现依据（A4）
+
+A4 的判据**不是** `docs/contract/*.json`（那些是**入站**的请求/响应样本），而是**出站**行为：
+出站请求体、出站头、上游响应经网关后的入站回执、以及控制台记号序列。依据全部集中在
+`docs/contract/outbound/`：
+
+- **`behavior.md`** —— 转发行为契约（两个入口的语义差异、响应头规则、响应形状逐字节、
+  上游错误分类与状态机、`>>>`/`[~]`/`<!>` 记号约定）。
+- **`observations.md`** —— 采样观察（端点、代理语义、字段映射、调度行为、分类边界）。
+- **`fixtures/`** —— 逐场景的出站请求体、路由记号探针、chat 重建的未采样边界表。
+
+采样方法：本地 MITM 假上游（`tools/mitmupstream`）拦截真实转发，把上游响应作为**输入参数**
+注入，从而在**账号池为空**的情况下也能穷举错误分支与切换/冷却路径。
+
+### 与我方自建 harness 的行为对照
+
+`tools/behavior_diff.py` 起**同一套**假上游，分别拉起 Python 参考实现（靶机）与我方 Go 实现，
+逐场景比较：响应头白名单、语义响应体、出站请求体**逐字节**、响应体**逐字节**、记号序列。
+易变字段（`id` / `created` / `created_at` / `logid` / `install_id` / `event_id`）掩码为 `<volatile>`。
+
+**结果：23 个场景中 4 个存在差异，且 4 个的差异全部只有易变字段**（`ok-openai` /
+`ok-openai-stream` / `chat-stream-from-json` / `stream-string-false`）——即 chat 转换路径里
+由时间戳与新生成 id 造成的必然差异，非语义差异。其余 19 个场景（含全部 `/v1/messages`
+成功/错误/SSE、`upstream-401/400/403/429/429-retryafter/500/abort/200-badjson/200-error`、
+`fail-then-ok`、`configs-down`、`no-account`、`chat-sse-on-nonstream`、`ct-passthrough`、
+`route-preview-multiturn`、`model-unknown`）逐字节「一致」。
+
+### 有意偏离（参考实现是缺陷，本实现不照抄）
+
+`/v1/chat/completions` 重建遇到的**未采样边界**（如 `role: system`、`tools`/`temperature`
+等 OpenAI 字段、`max_tokens` 缺失）一律按「白名单重建、其余丢弃」的**既定口径**处理，
+不猜默认值；`model` 非字符串的入站请求参考实现是 500 崩溃，本实现改为 400 + 明确文案。
+逐条见 `docs/contract/outbound/behavior.md` §六之二、§六之三。
+
+### 验收（全部来自真实运行）
+
+| 验收项 | 结果 |
+|---|---|
+| 契约回放（A3 的 43 条 + 空池分支，合计 45 个子用例） | 全绿 |
+| 行为对照 harness（`tools/behavior_diff.py`，23 场景 × Python/Go） | 19 一致 + 4 仅易变字段 |
+| 上游自带前端面板（`tools/e2e_panel.py`，真浏览器 CDP 驱动 `frontend/`） | 38/38（A4 未破） |
+| `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
+
+
 
 账号池为空，因此下列分支本轮**未能采到**，实现时不得凭猜测补全，需在拿到真实账号后
 重新采样：
