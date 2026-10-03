@@ -1,0 +1,11 @@
+{
+  "providers": [
+    "zai",
+    "bigmodel"
+  ],
+  "gateway_key_set": true,
+  "quota_pool": {
+    "zai": 4,
+    "bigmodel": 1
+  }
+}

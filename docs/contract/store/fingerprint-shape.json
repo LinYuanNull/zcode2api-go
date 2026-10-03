@@ -1,0 +1,9 @@
+{
+  "platform": "<enum> darwin | win32",
+  "arch": "<enum> arm64 | x64",
+  "os_version": "<string> 平台相关：darwin 形如 22.6.0 / 23.6.0 / 24.5.0 / 24.6.0 / 25.5.0；win32 形如 10.0.19045 / 10.0.22000 / 10.0.22621 / 10.0.22631 / 10.0.26100 / 10.0.26200",
+  "language": "<enum> de-DE | en-GB | en-SG | en-US | ja-JP | ko-KR | zh-CN",
+  "timezone": "<enum> America/Los_Angeles | America/New_York | Asia/Seoul | Asia/Shanghai | Asia/Singapore | Asia/Tokyo | Europe/Berlin | Europe/London",
+  "screen": "<enum> 1366x768 | 1440x900 | 1512x982 | 1728x1117 | 1920x1080 | 2560x1440 | 2560x1600 | 3840x2160",
+  "device_mid": "<string> 设备指纹标识，uuid4 形态；每次换发重新生成"
+}

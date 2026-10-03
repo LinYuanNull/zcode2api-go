@@ -12,6 +12,12 @@
 *.db-shm
 *.log
 
+# 例外：A2 契约夹具的账号库**必须入库** —— 它是 `go test` 的输入，
+# 也是「能读现有 accounts.db」这条验收的可复现依据。
+# 该库由 tools/samplefixture 在独立临时数据目录里生成，只含合成数据
+# （api_key 形如 fixture-token-NNNN、gateway_key 为合成值），不含任何真实凭据。
+!docs/contract/store/fixtures/target.db
+
 # 本地配置与密钥
 /.env
 /config.local.*

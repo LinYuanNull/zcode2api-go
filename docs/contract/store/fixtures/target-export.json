@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "exported_at": 1791041544.7243533,
+  "providers": {
+    "zai": [
+      {
+        "name": "fixture-renamed",
+        "mode": "apiKey",
+        "secret": "fixture-token-0001"
+      },
+      {
+        "name": "UPPER Case!",
+        "mode": "apiKey",
+        "secret": "fixture-token-0002"
+      },
+      {
+        "name": "账号测试",
+        "mode": "apiKey",
+        "secret": "fixture-token-0003"
+      },
+      {
+        "name": "zai-4",
+        "mode": "apiKey",
+        "secret": "fixture-token-0004"
+      }
+    ],
+    "bigmodel": [
+      {
+        "name": "bm-one",
+        "mode": "apiKey",
+        "secret": "fixture-token-0005"
+      },
+      {
+        "name": "cross-provider",
+        "mode": "apiKey",
+        "secret": "fixture-token-0001"
+      }
+    ]
+  }
+}

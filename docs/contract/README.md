@@ -46,6 +46,23 @@ docs/contract/<area>/<NN>-<route-slug>.<method>.json
 }
 ```
 
+## 落盘契约（`store/`）
+
+`store/` 是与上面 HTTP 样本并列的另一类契约：**落盘契约**。它记录的是靶机写出的
+`accounts.db`（表结构 / 索引 / 原始 `data` 字符串）以及由它归纳出的规则 ——
+因为 Go 实现要接管用户**现有**的账号库，这是「账号不丢失」的唯一防线。
+
+| 文件 | 内容 |
+|---|---|
+| `store/schema.sql` | 靶机库的 `sqlite_master` 存文本（表 + 索引），以及 `IF NOT EXISTS` 规范化说明 |
+| `store/account-data-shape.json` | `data` 列的 25 个字段与**固定键顺序** |
+| `store/fingerprint-shape.json` | 设备指纹的取值池与平台相关性 |
+| `store/observations.md` | 23 条归纳规则（逐条附证据）+ 未覆盖分支 + 夹具说明 |
+| `store/fixtures/` | **可复现判据**：靶机写出的库 + 原始响应体（`go test` 的输入） |
+
+夹具由 `tools/samplefixture/` 在独立临时数据目录里生成，**只含合成数据**
+（`api_key` 形如 `fixture-token-NNNN`、`gateway_key` 为合成值），不含任何真实凭据。
+
 ## 采样工具
 
 采样器在 `tools/samplecontract/`（Go，仅标准库）。它是**开发工具**，不随发布产物分发。

@@ -85,6 +85,42 @@ go run ./tools/samplecontract -base http://127.0.0.1:3000 -admin-key 1234 -out d
 
 合计 **25 个路由 / 43 条样本**（覆盖核查脚本见 A1 记录：期望 25、实际 25，无缺失无多余）。
 
+## 落盘契约采样（A2）
+
+HTTP 样本（上表）记录的是**跨进程可观察的 HTTP 行为**；A2 另需一类证据：
+靶机**写出的文件**。因为 Go 实现要接管用户现有的 `data/accounts.db`，
+「能读它、且不改动它的语义」是必须被证明的。
+
+| 项 | 值 |
+|---|---|
+| 采样对象 | 靶机在独立临时数据目录里写出的 `accounts.db`（`sqlite_master` + 原始行 + 原始 `data` 字符串） |
+| 采样方法 | 用靶机**自己的 HTTP 管理 API** 造数据（不读源码、不直接写库），然后读它写出的文件 |
+| 规则归纳 | 逐项变化的请求 + 回读响应（slug / 默认名 / 去重 / 掩码 / 强转 / 默认值 / 状态联动 / 列表顺序） |
+| 产出 | `docs/contract/store/`（`schema.sql` / `account-data-shape.json` / `fingerprint-shape.json` / `observations.md`） |
+| 夹具 | `docs/contract/store/fixtures/`（`target.db` 36864 B + 4 个原始响应体），由 `tools/samplefixture/` 生成并入库 |
+| 采样时机 | `2026-10-03 23:30`（本地时间） |
+
+**夹具的合成性**：`target.db` 里的 6 条账号全部由采样脚本用**合成凭据**创建
+（`api_key` 形如 `fixture-token-NNNN`；`gateway_key` 为 `fixture-gw-key-abcdef`；
+`admin_key` 为默认值 `1234`）。设备指纹的 `device_mid` / `install_id` 是靶机在
+临时库上随机生成的，与任何真实用户无关。**不含任何真实凭据或个人数据。**
+
+**采样环境与 A1 相同**：`ZCODE_DATA_DIR=<tmp>`、`ZCODE_ADMIN_KEY=1234`、端口 `13011`，
+靶机版本 `zcode-hub v2.6.8`（前端 `2.6.3`）。
+
+**复现方式**：
+
+```bash
+# 起靶机 → 造数据 → 抓库与响应体，一次产出全部夹具（内部用独立临时数据目录）
+cd <本仓库>
+go run ./tools/samplefixture -zcode <上游靶机目录> -out docs/contract/store/fixtures
+```
+
+**验收测试**（`internal/store`、`internal/models`、`internal/settings`、`internal/constants`）
+以夹具为输入做**双向读校验**：读库 → 我们的类型 → 重新编码，与靶机原始 `data`
+**紧凑化后逐字节相同**；`View()` 与靶机原始响应体逐字段相同；打开 + 全量读之后
+库文件与每行 `data` 不变。断言 ↔ 规则 的对应表见 `docs/contract/store/observations.md` §6。
+
 ## 已知未覆盖的分支（后续采样时补）
 
 账号池为空，因此下列分支本轮**未能采到**，实现时不得凭猜测补全，需在拿到真实账号后
@@ -97,6 +133,20 @@ go run ./tools/samplecontract -base http://127.0.0.1:3000 -admin-key 1234 -out d
 - **OAuth 完成链路**：`/admin/api/login/poll/{flow_id}` 的 `ready` 分支（含 `account` 视图）
   与 `failed` 分支的 `message` 文案。
 - **验证码**：`/admin/api/claim/manual` 在拿到浏览器端 `verify_param` 后的成功分支。
+
+### 落盘契约（A2）未覆盖的分支
+
+- **`mode="jwt"` 的账号**：只能由 OAuth 登录链路产生（A5）。字段已建模并保留 `jwt_token`。
+- **`status` 取 `cooling` / `exhausted` / `invalid`**：需真实账号真实调用失败才会进入（A4）。
+  枚举已按 `stats` 的键名登记，**转移条件未采样**。
+- **`quota` / `plan` / `plans` / `usage` / `recent_results` 的内部结构**：空账号一律 `{}` / `[]`。
+  Go 侧按**不透明 JSON 原样透传**，不解析、不重排。
+- **`installed_at` 何时被写入**：空账号为 `null`，保持透传。
+- **`stats.calls` / `stats.fail` 的语义**：采样时全库 `use_count` / `fail_count` 均为 0，
+  两种解释（求和 / 其它）都能得到 0。Go 侧暂取「求和」，**待 A4 拿到真实调用后校准**。
+- **指纹各字段的联合分布**：只能观察到边际池与平台相关性。Go 生成器从观测池取值并保证
+  平台一致性；随机量本就不可能逐字节复现，验收只要求「读取既有账号逐字段一致」。
+- **`name` 全为标点 / 空白时的 slug 结果**：未采样。Go 侧退到 provider 以保证 id 合法。
 
 ## 与上游的关系
 

@@ -1,0 +1,10 @@
+{
+  "admin_key_set": true,
+  "admin_key_masked": "••••",
+  "admin_key_is_default": true,
+  "gateway_key_set": true,
+  "gateway_key_masked": "fixt…cdef",
+  "quota_refresh_interval": 900,
+  "account_concurrency": 3,
+  "claim_round_interval": 5
+}
