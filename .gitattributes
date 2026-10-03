@@ -1,0 +1,11 @@
+# 文本文件统一以 LF 入库、并在工作树使用 LF
+# （Go 工具链与 gofmt 的期望；Windows 上 core.autocrlf=true 时靠这条兜住）
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.exe  binary
+*.ico  binary
+*.png  binary
+*.jpg  binary
+*.zip  binary
+*.db   binary

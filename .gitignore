@@ -1,0 +1,23 @@
+# 构建产物
+/zcode2api-go
+/zcode2api-go.exe
+/dist/
+*.exe
+
+# 运行时数据（账号库 / 设备指纹 / 日志 / 缓存）
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.log
+
+# 本地配置与密钥
+/.env
+/config.local.*
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
