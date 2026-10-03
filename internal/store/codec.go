@@ -7,7 +7,8 @@ import (
 	"github.com/LinYuanNull/zcode2api-go/internal/models"
 )
 
-func itoa(n int) string { return strconv.Itoa(n) }
+// itoa 写 meta 表用：设置项在 settings 里是 int64，落库统一成十进制字符串。
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
 func boolToInt(b bool) int {
 	if b {

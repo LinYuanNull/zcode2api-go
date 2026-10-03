@@ -87,15 +87,19 @@ func TestMaskSecret(t *testing.T) {
 
 // TestDefaults 对齐 observations.md #12。
 func TestDefaults(t *testing.T) {
-	if constants.DefaultAdminKey != "1234" {
-		t.Errorf("DefaultAdminKey = %q，期望 1234", constants.DefaultAdminKey)
+	// ⚠️ `admin_key` 没有常量默认值 —— 它是运行期配置（`ZCODE_ADMIN_KEY`）。
+	// A3 的对照实验推翻了 A2 的「字面量 1234」假设，详见 observations.md #8。
+	if constants.FallbackAdminKey != "zcode" {
+		t.Errorf("FallbackAdminKey = %q，期望 zcode", constants.FallbackAdminKey)
 	}
 	if constants.DefaultGatewayKey != "" {
 		t.Errorf("DefaultGatewayKey = %q，期望空串", constants.DefaultGatewayKey)
 	}
+	// ⚠️ claim_round_interval 是 3600，**不是 0** —— A2 把这份部署 `.env` 的
+	// `ZCODE_CLAIM_ROUND_INTERVAL=0` 当成了默认值。A3 移走 `.env` 后实测为 3600。
 	if constants.DefaultQuotaRefreshInterval != 1800 ||
 		constants.DefaultAccountConcurrency != 2 ||
-		constants.DefaultClaimRoundInterval != 0 {
+		constants.DefaultClaimRoundInterval != 3600 {
 		t.Errorf("整数默认值不符: %d/%d/%d",
 			constants.DefaultQuotaRefreshInterval, constants.DefaultAccountConcurrency, constants.DefaultClaimRoundInterval)
 	}

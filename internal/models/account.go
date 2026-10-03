@@ -139,7 +139,7 @@ func (a *Account) UnmarshalJSON(b []byte) error {
 
 // MarshalJSON 按落盘顺序编码；未知字段追加在末尾。
 func (a Account) MarshalJSON() ([]byte, error) {
-	o := newOrderedObject()
+	o := NewOrderedObject()
 	fpRaw, err := a.Fingerprint.Bytes()
 	if err != nil {
 		return nil, err
@@ -175,14 +175,14 @@ func (a Account) MarshalJSON() ([]byte, error) {
 		{"installed_at", a.InstalledAt},
 	}
 	for _, f := range fields {
-		if err := o.set(f.key, f.val); err != nil {
+		if err := o.Set(f.key, f.val); err != nil {
 			return nil, err
 		}
 	}
 	for _, e := range a.Extra {
-		o.setRaw(e.Key, e.Raw)
+		o.SetRaw(e.Key, e.Raw)
 	}
-	return o.bytes()
+	return o.Bytes()
 }
 
 func rawOr(r json.RawMessage, def string) json.RawMessage {
@@ -209,6 +209,14 @@ func (a Account) Credential() string {
 
 // MaskedToken 返回对外展示用的掩码凭据。依据：observations.md #6。
 func (a Account) MaskedToken() string { return constants.MaskToken(a.Credential()) }
+
+// Usable 报告账号当前是否**可参与网关调度**（启用且状态为 active）。
+//
+// 两处消费它：`GET /admin/api/status` 的 `quota_pool` 计数，以及网关的
+// 「无可用账号」判定。判定口径统一放这里，避免两处漂移。
+func (a Account) Usable() bool {
+	return a.Enabled && a.Status == constants.StatusActive
+}
 
 // PublicView 是对外暴露的账号视图（`GET /admin/api/accounts` 的 `accounts[]` 元素）。
 //

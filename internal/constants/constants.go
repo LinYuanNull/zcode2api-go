@@ -4,9 +4,15 @@
 // 本包只放**结构性事实** —— 枚举取值、默认值、阈值；不放任何上游文案，也不放业务逻辑。
 package constants
 
+// ProviderZAI 是唯一支持 JWT（Coding Plan）凭据的 provider。
+//
+// 依据：实测（SPEC.md「补充实测」）—— 同一串 JWT 交给 bigmodel 会被存成 apiKey，
+// 只有 zai 会判成 jwt。所以 provider 是 mode 判定的硬条件，不是修饰。
+const ProviderZAI = "zai"
+
 // 支持的 provider 枚举。**顺序即对外 `providers` 字段的顺序**（枚举声明序，不是字典序）。
 // 依据：observations.md #1（大小写敏感，只有这两个）与 #17。
-var Providers = []string{"zai", "bigmodel"}
+var Providers = []string{ProviderZAI, "bigmodel"}
 
 // IsProvider 判断 provider 是否在枚举内。
 func IsProvider(p string) bool {
@@ -18,7 +24,11 @@ func IsProvider(p string) bool {
 	return false
 }
 
-// 账号凭据形态。依据：observations.md #14（新增接口固定产出 apiKey）与 #4 未覆盖分支。
+// 账号凭据形态。
+//
+// 判据见 `adminapi.detectMode`：**仅 zai 且凭据恰好含 2 个点** 才是 jwt。
+// （早先以为「新增接口固定产出 apiKey」是错的 —— 那是只采到一条无点 token 造成的
+// 假象，已用运行中的靶机逐条探测推翻，见 SPEC.md「补充实测」。）
 const (
 	ModeAPIKey = "apiKey"
 	ModeJWT    = "jwt"
@@ -37,12 +47,43 @@ const (
 )
 
 // 设置项默认值。依据：observations.md #12。
+//
+// ⚠️ `admin_key` **没有常量默认值** —— 它是**运行期配置**（`ZCODE_ADMIN_KEY`，
+// 见 `settings.Configured`）。
+// A2 曾把采样时 `.env` 的取值 `"1234"` 记成常量，A3 的对照实验证明那是错的：
+// 靶机的 `admin_key_is_default` 比的是**配置给的默认值**，不是字面量
+// （`ZCODE_ADMIN_KEY=9999` 时，`admin_key=9999` → true、`admin_key=1234` → **false**）。
+//
+// ⚠️ 下面四项里**除 gateway_key 外**都能被同名环境变量覆盖为「首启默认值」
+// （实测：`ZCODE_QUOTA_REFRESH_INTERVAL=111` / `ZCODE_ACCOUNT_CONCURRENCY=7` /
+// `ZCODE_CLAIM_ROUND_INTERVAL=222` 在全新数据目录上分别落成 111 / 7 / 222）。
+// 这里的常量是**环境变量也没给**时的回落值。
 const (
-	DefaultAdminKey             = "1234"
-	DefaultGatewayKey           = ""
+	// FallbackAdminKey 是**完全未配置**时的回落值。
+	// 依据：把 `.env` 移走、不设 `ZCODE_ADMIN_KEY` 起靶机，用 `Bearer zcode` 得 200，
+	// 而 `1234` / `admin` / `changeme` / `password` 全部 401
+	// ⇒ 未配置时的默认密码是 `zcode`（可观察行为，非源码）。
+	FallbackAdminKey = "zcode"
+
+	// DefaultGatewayKey 是网关 Key 的默认值（空 = 不校验）。
+	//
+	// ⚠️ **没有对应的环境变量**：`ZCODE_GATEWAY_KEY` 在 os.environ、`.env`、
+	// 以及运行期鉴权三条路径上**实测都不生效**（三条独立探测，见 observations.md #12）。
+	// 网关 Key 只能经 `PUT /admin/api/settings` 设置。
+	DefaultGatewayKey = ""
+
+	// DefaultQuotaRefreshInterval 是 `ZCODE_QUOTA_REFRESH_INTERVAL` 未设时的首启值。
 	DefaultQuotaRefreshInterval = 1800
-	DefaultAccountConcurrency   = 2
-	DefaultClaimRoundInterval   = 0
+
+	// DefaultAccountConcurrency 是 `ZCODE_ACCOUNT_CONCURRENCY` 未设时的首启值。
+	DefaultAccountConcurrency = 2
+
+	// DefaultClaimRoundInterval 是 3600，**不是 0**。
+	//
+	// A2 记成 0，是把这份部署 `.env` 里的 `ZCODE_CLAIM_ROUND_INTERVAL=0` 当成了默认值。
+	// A3 实测：移走 `.env`、不设该环境变量，全新数据目录首启得到 **3600**；
+	// 设成 222 则得到 222。⇒ 3600 是代码回落值，0 只是配置取值。
+	DefaultClaimRoundInterval = 3600
 )
 
 // meta 表的键名。依据：schema.sql。

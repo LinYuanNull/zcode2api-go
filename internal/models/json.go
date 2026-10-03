@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// orderedObject 是一个**保持键顺序**的 JSON 对象。
+// OrderedObject 是一个**保持键顺序**的 JSON 对象。
 //
 // 为什么需要它：靶机用 Python 的 `json.dumps` 落盘 `accounts.data`，
 // 字典的插入序就是字节序。Go 的 `map` 无序、`struct` 只能表达固定字段集，
@@ -15,18 +15,23 @@ import (
 // 顺序不是学究问题 —— 它是**文件字节层面可观测的事实**，也是 A2 双向读校验的判据
 // （见 docs/contract/store/observations.md 第 2 节）。未知字段原样带过则是为了
 // 上游将来加字段时，本实现不会把它抹掉。
-type orderedObject struct {
+//
+// A3 起它也是 HTTP 层的工具：`GET /admin/api/export` 的 `providers` 是
+// 「provider → 条目数组」的映射，键顺序必须是枚举序（`zai` 在前），
+// 用 map 就丢了。
+type OrderedObject struct {
 	keys []string
 	vals map[string]json.RawMessage
 }
 
-func newOrderedObject() *orderedObject {
-	return &orderedObject{vals: make(map[string]json.RawMessage)}
+// NewOrderedObject 建一个空的有序对象。
+func NewOrderedObject() *OrderedObject {
+	return &OrderedObject{vals: make(map[string]json.RawMessage)}
 }
 
 // parseOrderedObject 用流式 Token 逐个读出键顺序。
 // 直接 json.Unmarshal 到 map 会丢顺序，所以这里必须走 Decoder。
-func parseOrderedObject(b []byte) (*orderedObject, error) {
+func parseOrderedObject(b []byte) (*OrderedObject, error) {
 	dec := json.NewDecoder(bytes.NewReader(b))
 	tok, err := dec.Token()
 	if err != nil {
@@ -35,7 +40,7 @@ func parseOrderedObject(b []byte) (*orderedObject, error) {
 	if d, ok := tok.(json.Delim); !ok || d != '{' {
 		return nil, fmt.Errorf("期望 JSON 对象，实际是 %v", tok)
 	}
-	o := newOrderedObject()
+	o := NewOrderedObject()
 	for dec.More() {
 		kt, err := dec.Token()
 		if err != nil {
@@ -62,38 +67,38 @@ func parseOrderedObject(b []byte) (*orderedObject, error) {
 	return o, nil
 }
 
-// has 报告键是否存在。
-func (o *orderedObject) has(key string) bool {
+// Has 报告键是否存在。
+func (o *OrderedObject) Has(key string) bool {
 	_, ok := o.vals[key]
 	return ok
 }
 
-// raw 取原始值（不存在时返回 nil, false）。
-func (o *orderedObject) raw(key string) (json.RawMessage, bool) {
+// Raw 取原始值（不存在时返回 nil, false）。
+func (o *OrderedObject) Raw(key string) (json.RawMessage, bool) {
 	v, ok := o.vals[key]
 	return v, ok
 }
 
-// setRaw 写入原始值：键已存在则**原位替换**（保持位置），否则追加到末尾。
-func (o *orderedObject) setRaw(key string, v json.RawMessage) {
+// SetRaw 写入原始值：键已存在则**原位替换**（保持位置），否则追加到末尾。
+func (o *OrderedObject) SetRaw(key string, v json.RawMessage) {
 	if _, ok := o.vals[key]; !ok {
 		o.keys = append(o.keys, key)
 	}
 	o.vals[key] = v
 }
 
-// set 用 json 编码后的值写入。
-func (o *orderedObject) set(key string, v any) error {
+// Set 用 json 编码后的值写入。
+func (o *OrderedObject) Set(key string, v any) error {
 	b, err := marshalNoHTMLEscape(v)
 	if err != nil {
 		return err
 	}
-	o.setRaw(key, b)
+	o.SetRaw(key, b)
 	return nil
 }
 
-// take 移除一个键（同时从顺序表里摘掉）。
-func (o *orderedObject) take(key string) {
+// Take 移除一个键（同时从顺序表里摘掉）。
+func (o *OrderedObject) Take(key string) {
 	if _, ok := o.vals[key]; !ok {
 		return
 	}
@@ -106,8 +111,8 @@ func (o *orderedObject) take(key string) {
 	}
 }
 
-// bytes 按键顺序编码回 JSON。
-func (o *orderedObject) bytes() ([]byte, error) {
+// Bytes 按键顺序编码回 JSON。
+func (o *OrderedObject) Bytes() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteByte('{')
 	for i, k := range o.keys {

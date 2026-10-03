@@ -67,57 +67,57 @@
 ```json
 {
   "accounts": [ <account>, ... ],
-  "providers": [ "zai", "bigmodel" ],
   "stats": {
+    "total": <number>,
     "active": <number>,
-    "calls": <number>,
-    "cooling": <number>,
-    "disabled": <number>,
     "exhausted": <number>,
-    "fail": <number>,
+    "cooling": <number>,
     "invalid": <number>,
-    "total": <number>
+    "disabled": <number>,
+    "calls": <number>,
+    "fail": <number>
   },
+  "providers": [ "zai", "bigmodel" ],
   "ts": <number>
 }
 ```
 - `<account>`（public_view，键序即样本）：
 ```json
 {
-  "cooling_until": <number|null>,
-  "created_at": <number>,
-  "enabled": <bool>,
-  "fail_count": <number>,
-  "fingerprint": <fingerprint>,
   "id": "<slug>-<8hex>",
-  "install_id": "<string>",
-  "installed_at": <number|null>,
-  "last_checked_at": <number|null>,
-  "last_error": <string|null>,
-  "last_used_at": <number|null>,
-  "mode": "apiKey",
   "name": "<string>",
+  "provider": "zai",
+  "mode": "apiKey",
+  "token_masked": "<masked>",
+  "enabled": <bool>,
+  "status": "active",
+  "quota": {},
   "plan": {},
   "plans": [],
-  "provider": "zai",
-  "quota": {},
-  "recent_results": [],
+  "use_count": <number>,
+  "fail_count": <number>,
   "risk_strikes": <number>,
-  "status": "active",
-  "token_masked": "<masked>",
-  "use_count": <number>
+  "recent_results": [],
+  "last_used_at": <number|null>,
+  "last_checked_at": <number|null>,
+  "cooling_until": <number|null>,
+  "last_error": <string|null>,
+  "created_at": <number>,
+  "fingerprint": <fingerprint>,
+  "install_id": "<string>",
+  "installed_at": <number|null>
 }
 ```
 - `<fingerprint>`：
 ```json
 {
-  "arch": "arm64",
-  "device_mid": "<string>",
-  "language": "<bcp47>",
-  "os_version": "<string>",
   "platform": "darwin",
+  "arch": "arm64",
+  "os_version": "<string>",
+  "language": "<bcp47>",
+  "timezone": "<tz>",
   "screen": "<WxH>",
-  "timezone": "<tz>"
+  "device_mid": "<string>"
 }
 ```
 - 错误分支：本轮无。
@@ -128,11 +128,11 @@
 - 成功 200：
 ```json
 {
-  "gateway_key_set": <bool>,
   "providers": [ "zai", "bigmodel" ],
+  "gateway_key_set": <bool>,
   "quota_pool": {
-    "bigmodel": <number>,
-    "zai": <number>
+    "zai": <number>,
+    "bigmodel": <number>
   }
 }
 ```
@@ -208,8 +208,8 @@
 - 成功 200：
 ```json
 {
-  "fingerprint": <fingerprint>,
-  "ok": true
+  "ok": true,
+  "fingerprint": <fingerprint>
 }
 ```
   - `<fingerprint>` 结构同第 2 节。
@@ -226,13 +226,13 @@
 - 成功 200：
 ```json
 {
+  "summary": {
+    "ok": <number>,
+    "fail": <number>
+  },
   "count": <number>,
   "skipped_cooling": <number>,
-  "skipped_invalid": <number>,
-  "summary": {
-    "fail": <number>,
-    "ok": <number>
-  }
+  "skipped_invalid": <number>
 }
 ```
 - 错误分支：本轮无。
@@ -243,8 +243,8 @@
 - 成功 200（非 JWT 账号分支）：
 ```json
 {
-  "message": "仅 Coding Plan (JWT) 账号支持额度查询",
-  "ok": false
+  "ok": false,
+  "message": "仅 Coding Plan (JWT) 账号支持额度查询"
 }
 ```
 - 错误分支：
@@ -260,9 +260,9 @@
 - 成功 200：
 ```json
 {
+  "flow_id": "<32hex>",
   "authorize_url": "<url>",
-  "expires_in": <number>,
-  "flow_id": "<32hex>"
+  "expires_in": <number>
 }
 ```
 - 错误分支（notes 提及，**无样本**）：
@@ -298,8 +298,8 @@
 {
   "outcomes": [],
   "summary": {
-    "fail": 0,
-    "ok": 0
+    "ok": 0,
+    "fail": 0
   }
 }
 ```
@@ -312,9 +312,9 @@
 ```json
 {
   "enabled": <bool>,
-  "prefix": "<string>",
+  "scene_id": "<string>",
   "region": "<string>",
-  "scene_id": "<string>"
+  "prefix": "<string>"
 }
 ```
   - 样本值：`enabled=true`, `prefix="no8xfe"`, `region="cn"`, `scene_id="11xygtvd"`。
@@ -340,14 +340,14 @@
 - 成功 200：
 ```json
 {
-  "account_concurrency": <number>,
-  "admin_key_is_default": <bool>,
-  "admin_key_masked": "<masked>",
   "admin_key_set": <bool>,
-  "claim_round_interval": <number>,
-  "gateway_key_masked": "<masked>",
+  "admin_key_masked": "<masked>",
+  "admin_key_is_default": <bool>,
   "gateway_key_set": <bool>,
-  "quota_refresh_interval": <number>
+  "gateway_key_masked": "<masked>",
+  "quota_refresh_interval": <number>,
+  "account_concurrency": <number>,
+  "claim_round_interval": <number>
 }
 ```
   - 样本值：`account_concurrency=2`, `admin_key_is_default=true`, `admin_key_set=true`, `claim_round_interval=0`, `gateway_key_set=false`, `quota_refresh_interval=1800`。
@@ -380,16 +380,16 @@
 - 成功 200：
 ```json
 {
+  "version": 1,
   "exported_at": <number>,
   "providers": {
-    "bigmodel": [
-      { "mode": "<string>", "name": "<string>", "secret": "<plaintext>" }
-    ],
     "zai": [
-      { "mode": "apiKey", "name": "<string>", "secret": "<plaintext>" }
+      { "name": "<string>", "mode": "apiKey", "secret": "<plaintext>" }
+    ],
+    "bigmodel": [
+      { "name": "<string>", "mode": "<string>", "secret": "<plaintext>" }
     ]
-  },
-  "version": 1
+  }
 }
 ```
 - 错误分支：本轮无。
@@ -483,7 +483,9 @@
 7. **notes 描述了样本不可观察的结构**：`21-monitoring` 的 notes 称 `entries` 条目含 `id/model/stream/prompt/status/…`，但样本 `entries` 为空，该结构无法验证。
 8. **notes 引用了无样本的错误分支**：`11-login-start` 提到 502 错误体 `{detail:登录初始化失败: …}`，`…` 的具体文本不可知。
 9. **`settings` 语义存疑**：`admin_key_set=true` 与 `admin_key_is_default=true` 同时成立（可能指正在使用默认密钥），两字段关系未在样本中解释。
-   *（A2 已解：`admin_key_is_default` = `admin_key == "1234"`，见 `store/observations.md` #8。）*
+   *（A2 误答：`admin_key_is_default` = `admin_key == "1234"`。**A3 更正**：比的是
+   **本进程配置给的默认密码**（`ZCODE_ADMIN_KEY`，未设时回落 `zcode`）—— `1234` 只是
+   采样机 `.env` 的取值。三组对照实验见 `store/observations.md` §3.1。）*
 10. **`settings` 写入对状态的影响无法交叉验证**：`18-settings-put-ok` 设置 `gateway_key` 后 `reset-gwkey` 又置空；`03-status` 的 `gateway_key_set=false` 与 `17-settings-get` 一致，但均为同一时点，无法验证写入后的即时反映。
 11. **fingerprint 常量与变量无法区分**：`08-...-ok` 与 `02-accounts-one` 的 `platform`(darwin)、`arch`(arm64)、`screen`(1728x1117) 完全相同，而 `language`/`timezone`/`os_version` 不同（de-DE/Europe/Berlin/25.5.0 vs zh-CN/Asia/Shanghai/23.6.0）；哪些字段恒定、哪些随机，样本不足以判定。
    *（A2 已解：全部字段从观测池随机取值，仅 `platform` 与 `os_version` 强相关 —— darwin ⇒ `2x.y.z`、win32 ⇒ `10.0.x`；见 `store/fingerprint-shape.json`。）*
@@ -504,6 +506,8 @@
 - `type`（gateway models）= `model`；`object`（gateway models）= `list`。
 - captcha `region` 样本为 `cn`；`export.version` = 1。
 - 默认配置类（样本值，是否恒定未知）：`keep=500`、`expires_in=300`、`quota_refresh_interval=1800`、`account_concurrency=2`、`claim_round_interval=0`。
+  - ⚠️ `claim_round_interval=0` **是采样机 `.env` 的取值，不是代码默认值**：A3 实测不设该环境变量时首启为 **3600**（见 `store/observations.md` §3.2）。
+  - ⚠️ `17-settings-get` 的 `admin_key_is_default=true` 同理依赖采样配置（`ZCODE_ADMIN_KEY=1234`），见上表第 9 条。
 
 ### Go 实现注意点
 - **键顺序**：样本里的键顺序**就是上游的真实顺序**（2026-10-03 重采样后已恢复；见文件头的重采样说明）。

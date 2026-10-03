@@ -138,6 +138,67 @@ go run ./tools/samplefixture -zcode <上游靶机目录> -out docs/contract/stor
 **紧凑化后逐字节相同**；`View()` 与靶机原始响应体逐字段相同；打开 + 全量读之后
 库文件与每行 `data` 不变。断言 ↔ 规则 的对应表见 `docs/contract/store/observations.md` §6。
 
+## 管理 API 实现依据（A3）
+
+A3 实现 22 条管理路由（路由 + 鉴权 + settings 读写）。依据仍是**运行中靶机的可观察行为**，
+本节的每条结论都附了「怎么测出来的」，便于复核。
+
+### 采样环境的两处误记（A3 更正）
+
+A2 把**这份部署 `.env` 的取值**当成了**代码默认值**，两条都已在
+`docs/contract/store/observations.md` §3.1/§3.2 更正：
+
+| 项 | A2 记录 | 实测（A3） | 判据 |
+|---|---|---|---|
+| `admin_key_is_default` | `= (admin_key == "1234")` | `=`（库里的 `admin_key` == **本进程配置给的默认密码**）；配置来自 `ZCODE_ADMIN_KEY`，未设回落 `zcode` | ① 库 `7777` + 以 `ZCODE_ADMIN_KEY=8888` 重启 → 用 7777 能进但 `is_default=false`；② 库 `7777` → PUT `8888` → 以 env `8888` 重启 → `true` |
+| `claim_round_interval` 默认 | `0` | **`3600`** | 把 `.env` 移开、不设 `ZCODE_CLAIM_ROUND_INTERVAL`，全新数据目录首启 → `3600`；设 `222` → `222` |
+
+复现这类实验**必须把靶机的 `.env` 移开** —— 它的 `ZCODE_ADMIN_KEY=1234` 与
+`ZCODE_CLAIM_ROUND_INTERVAL=0` 正是那两条误记的来源。
+
+### 配置链路（实测）
+
+- 上游 `serve` **没有任何命令行参数**（`cli.py serve --help` 会直接去启动服务），
+  配置全走环境变量 / `.env`。
+- `ZCODE_ADMIN_KEY` / `ZCODE_QUOTA_REFRESH_INTERVAL` / `ZCODE_ACCOUNT_CONCURRENCY` /
+  `ZCODE_CLAIM_ROUND_INTERVAL` 都是**首启默认值**：首启 `INSERT OR IGNORE` 写库，之后**以库为准**。
+- **`ZCODE_GATEWAY_KEY` 不生效**（三条独立探测：进程环境、`.env`、运行期 `/v1/models` 不带凭证仍 200）。
+  所以 `gateway_key` 的初值恒为 `""`，只能经 `PUT /admin/api/settings` 设置。
+
+### 逐条实测钉死的判据
+
+| 判据 | 结论 | 怎么测的 |
+|---|---|---|
+| `mode` 判定 | **仅 `provider == "zai"` 且凭据恰好含 2 个点 → `jwt`**，否则 `apiKey` | 对运行中的靶机逐条探测：`..`（只有点、无内容）也判 jwt；同一串 JWT 交给 `bigmodel` 被存成 `apiKey` ⇒ provider 是硬条件 |
+| 导入格式 | 只接受**对象条目** `{name, mode, secret}`；字符串数组形态（`{"providers":{"zai":["sk-a"]}}`）→ **500** | 两种 payload 各打一次 |
+| 鉴权位置 | **在路由匹配之后**：未知路径（`/admin/api/nope`）不带凭证也是 **404 `{"detail":"Not Found"}`**，不是 401 | 不带 `Authorization` 请求未知路径 |
+| 密钥掩码 | 空串 → `""`；`len ≤ 8` → `••••`；否则 `前 4 + '…' + 后 4` | 逐长度取值回读 |
+| 空容器 | 空数组/空对象写 `[]` / `{}`，**不写 `null`** | 逐路由读空态响应 |
+| 业务失败 | 用 **200** 承载（`ok:false`），不能只看状态码 | `10-account-refresh-nonjwt` |
+
+### 键顺序（可观测契约）
+
+样本里的键顺序**就是上游的真实顺序**（2026-10-03 重采样后恢复，见上）。
+`docs/contract/admin/SPEC.md` 第二部分的骨架曾按字典序手写，与样本矛盾 ——
+已用 `tools/spec_reorder.py` 按样本重排，并在 CI 里加了一步
+`python3 tools/spec_reorder.py --check`，防止再次漂移。
+
+### 未实现的分支一律显式报错
+
+需要上游 OAuth / 额度接口的分支（JWT 额度刷新、定时领取、登录发起）在 A3 阶段
+**一律显式失败**（`501 尚未实现` / `502 登录初始化失败: …（需要上游 OAuth，属于 A5）`），
+**绝不伪造成功、绝不伪造 `flow_id`**。端到端断言同时覆盖面板文案与代理链路状态码。
+
+### 验收（全部来自真实运行）
+
+| 验收项 | 结果 |
+|---|---|
+| 样本回放（43 条 + 空池分支逐字节） | 全绿 |
+| 上游自带前端面板（`tools/e2e_panel.py`，真浏览器 CDP 驱动 `frontend/`） | 38/38 |
+| ModelMux 集成脚本（`test/verify_zcode_accounts.py`，默认假网关） | 44/44（基线未破） |
+| 同上，`ZCODE_UPSTREAM_EXE` 指向本实现 | 47/47 |
+| `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
+
 ## 已知未覆盖的分支（后续采样时补）
 
 账号池为空，因此下列分支本轮**未能采到**，实现时不得凭猜测补全，需在拿到真实账号后

@@ -27,8 +27,31 @@ type MetaStore interface {
 	SetMeta(key, value string) error
 }
 
-// Settings 是五项设置的内存形态。
+// Settings 是五项设置的内存形态，外加一组**运行期配置**（`Configured`）。
 type Settings struct {
+	AdminKey             string
+	GatewayKey           string
+	QuotaRefreshInterval int64
+	AccountConcurrency   int64
+	ClaimRoundInterval   int64
+
+	// Configured 是**本次运行**配置给定的初值（环境变量 / 启动参数）。
+	//
+	// 它有两个用途，都来自 A3 的对照实验（见 observations.md #8/#12）：
+	//  1. 首启时由 store 写进 `meta`（`INSERT OR IGNORE`），之后以库为准；
+	//  2. `admin_key_is_default` 拿它作比较基准 —— 比的是**本进程配置给的值**，
+	//     既不是字面量，也不是库里那份初值。
+	//
+	// 实测：`ZCODE_ADMIN_KEY=8888` 重启一个库里存着 `7777` 的实例 ⇒ 用 8888 被拒
+	//（库为准）、用 7777 能进但 `admin_key_is_default=false`（≠ 本进程的 8888）。
+	Configured Configured
+}
+
+// Configured 是本次运行的设置初值。
+//
+// 整数字段**原样采用**：`0` 是合法取值（实测 `ZCODE_CLAIM_ROUND_INTERVAL=0`
+// 会真的落成 0），不能拿 0 当「未配置」。
+type Configured struct {
 	AdminKey             string
 	GatewayKey           string
 	QuotaRefreshInterval int64
@@ -36,20 +59,63 @@ type Settings struct {
 	ClaimRoundInterval   int64
 }
 
-// Defaults 返回全新数据目录下的默认值。依据：observations.md #12。
-func Defaults() Settings {
+// NewConfigured 归一配置初值。
+//
+// 只归一 `AdminKey`：空串是**非法后台密码**（#9 不允许置空），该状态无法自洽，
+// 故按「未配置」处理、回落 `constants.FallbackAdminKey`。
+// 实测依据：移走 `.env` 且不设 `ZCODE_ADMIN_KEY` 起靶机，`Bearer zcode` → 200。
+func NewConfigured(adminKey, gatewayKey string, quotaRefresh, accountConcurrency, claimRound int64) Configured {
+	return Configured{
+		AdminKey:             NormalizeAdminKey(adminKey),
+		GatewayKey:           gatewayKey,
+		QuotaRefreshInterval: quotaRefresh,
+		AccountConcurrency:   accountConcurrency,
+		ClaimRoundInterval:   claimRound,
+	}
+}
+
+// ConfiguredWithAdminKey 是「只配置后台密码」的简写：其余四项取 constants 回落值。
+//
+// 供只关心后台密码的调用方与测试使用；生产入口一律走 NewConfigured
+// （那里会把全部 `ZCODE_*` 环境变量都传进来）。
+func ConfiguredWithAdminKey(adminKey string) Configured {
+	return NewConfigured(adminKey,
+		constants.DefaultGatewayKey,
+		constants.DefaultQuotaRefreshInterval,
+		constants.DefaultAccountConcurrency,
+		constants.DefaultClaimRoundInterval,
+	)
+}
+
+// NormalizeAdminKey 把「配置给定的初始后台密码」归一：未配置（空串）时回落到
+// `constants.FallbackAdminKey`。
+//
+// 为什么把空串当「未配置」：`ZCODE_ADMIN_KEY=`（显式空）在靶机上会让
+// `DEFAULT_ADMIN_KEY` 变成空串，而空串是**非法后台密码**（#9 不允许置空），
+// 该状态无法自洽，故按未配置处理。
+func NormalizeAdminKey(k string) string {
+	if k == "" {
+		return constants.FallbackAdminKey
+	}
+	return k
+}
+
+// Defaults 返回全新数据目录下的默认值，全部取自配置初值。
+func Defaults(c Configured) Settings {
+	c.AdminKey = NormalizeAdminKey(c.AdminKey)
 	return Settings{
-		AdminKey:             constants.DefaultAdminKey,
-		GatewayKey:           constants.DefaultGatewayKey,
-		QuotaRefreshInterval: constants.DefaultQuotaRefreshInterval,
-		AccountConcurrency:   constants.DefaultAccountConcurrency,
-		ClaimRoundInterval:   constants.DefaultClaimRoundInterval,
+		AdminKey:             c.AdminKey,
+		GatewayKey:           c.GatewayKey,
+		QuotaRefreshInterval: c.QuotaRefreshInterval,
+		AccountConcurrency:   c.AccountConcurrency,
+		ClaimRoundInterval:   c.ClaimRoundInterval,
+		Configured:           c,
 	}
 }
 
 // Load 从存储读出设置；缺失的键回落到默认值。
-func Load(ms MetaStore) (Settings, error) {
-	s := Defaults()
+func Load(ms MetaStore, c Configured) (Settings, error) {
+	s := Defaults(c)
 	if v, ok, err := ms.GetMeta(constants.MetaAdminKey); err != nil {
 		return s, err
 	} else if ok {
@@ -111,7 +177,7 @@ func (p Patch) IsEmpty() bool {
 //   - `admin_key` 不允许为空串（#9，报 ErrAdminKeyEmpty）；
 //   - 整数字段接受 int / float / bool，浮点向零截断、负数钳到 0，无上界；
 //     `string` / `null` 一律 ErrNotANumber（#10）。
-func Apply(ms MetaStore, p Patch) (Settings, error) {
+func Apply(ms MetaStore, p Patch, c Configured) (Settings, error) {
 	if p.AdminKey != nil {
 		if *p.AdminKey == "" {
 			return Settings{}, ErrAdminKeyEmpty
@@ -145,7 +211,7 @@ func Apply(ms MetaStore, p Patch) (Settings, error) {
 			return Settings{}, err
 		}
 	}
-	return Load(ms)
+	return Load(ms, c)
 }
 
 // ErrAdminKeyEmpty 对应靶机的 400「后台密钥不能为空」。
@@ -208,11 +274,14 @@ type View struct {
 //
 // `admin_key_set` 恒为 true —— 靶机的后台密码首启即写库、且不允许置空（#9），
 // 所以「未设置」这个状态在库层面不存在。
+//
+// `admin_key_is_default` 比的是**配置给定的默认值**（`s.Configured.AdminKey`），
+// 不是字面量、也不是库里那份初值 —— 见 Configured 的实测证据。
 func (s Settings) View() View {
 	return View{
 		AdminKeySet:          s.AdminKey != "",
 		AdminKeyMasked:       constants.MaskSecret(s.AdminKey),
-		AdminKeyIsDefault:    s.AdminKey == constants.DefaultAdminKey,
+		AdminKeyIsDefault:    s.AdminKey == NormalizeAdminKey(s.Configured.AdminKey),
 		GatewayKeySet:        s.GatewayKey != "",
 		GatewayKeyMasked:     constants.MaskSecret(s.GatewayKey),
 		QuotaRefreshInterval: s.QuotaRefreshInterval,

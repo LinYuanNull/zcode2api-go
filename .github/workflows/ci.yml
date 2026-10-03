@@ -38,3 +38,8 @@ jobs:
 
       - name: go test
         run: go test ./...
+
+      # 契约文档的骨架键序必须与 docs/contract/admin/*.json 样本一致：
+      # 骨架是照写 struct 字段声明序的输入，顺序错了响应体就与靶机不同形。
+      - name: contract spec key order
+        run: python3 tools/spec_reorder.py --check

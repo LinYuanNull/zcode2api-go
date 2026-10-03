@@ -275,7 +275,9 @@ func TestA2AccountsProjection(t *testing.T) {
 func TestA2SettingsView(t *testing.T) {
 	st, _, _ := openFixture(t)
 
-	s, err := settings.Load(st)
+	// 夹具是在 `ZCODE_ADMIN_KEY=1234` 下采的，所以配置默认值就是 `1234`
+	// —— `admin_key_is_default` 比的是它（observations.md #8）。
+	s, err := settings.Load(st, settings.ConfiguredWithAdminKey("1234"))
 	if err != nil {
 		t.Fatalf("读取设置失败: %v", err)
 	}
@@ -308,7 +310,7 @@ func TestA2ReadDoesNotRewrite(t *testing.T) {
 
 	// 触发全部读路径。
 	_ = st.List()
-	if _, err := settings.Load(st); err != nil {
+	if _, err := settings.Load(st, settings.ConfiguredWithAdminKey("1234")); err != nil {
 		t.Fatalf("读取设置失败: %v", err)
 	}
 	_ = st.CountByProvider("zai")
@@ -418,4 +420,72 @@ func equalStrings(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// TestInitialSettingsSeededOnFirstBoot 固化「首启写库」的五项设置初值。
+//
+// 依据（A3 实测，observations.md #12）：
+//   - 上游 `serve` 没有任何命令行参数，配置全走环境变量；
+//   - `ZCODE_ADMIN_KEY` / `ZCODE_QUOTA_REFRESH_INTERVAL` / `ZCODE_ACCOUNT_CONCURRENCY`
+//     / `ZCODE_CLAIM_ROUND_INTERVAL` 都是**首启默认值**，首启写库后以库为准；
+//   - `ZCODE_GATEWAY_KEY` **不生效**，所以网关 Key 初值只能是空串。
+//
+// 这里验的是「首启写入的字节」，因为 `data/accounts.db` 里的 meta 行本身
+// 就是 A2 落盘契约的一部分。
+func TestInitialSettingsSeededOnFirstBoot(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "accounts.db")
+
+	cfg := settings.NewConfigured("p@ss", "", 111, 7, 222)
+	st, err := store.Open(path, store.WithInitialSettings(cfg))
+	if err != nil {
+		t.Fatalf("打开账号库失败: %v", err)
+	}
+	_ = st.Close()
+
+	// 重开一次，这次给一组**完全不同**的初值：库里的值必须原样保留
+	//（INSERT OR IGNORE 语义 —— 「首启写库、之后以库为准」）。
+	cfg2 := settings.NewConfigured("other", "gw-x", 999, 9, 999)
+	st2, err := store.Open(path, store.WithInitialSettings(cfg2))
+	if err != nil {
+		t.Fatalf("二次打开失败: %v", err)
+	}
+	defer st2.Close()
+
+	s, err := settings.Load(st2, cfg2)
+	if err != nil {
+		t.Fatalf("读取设置失败: %v", err)
+	}
+	if s.AdminKey != "p@ss" || s.GatewayKey != "" ||
+		s.QuotaRefreshInterval != 111 || s.AccountConcurrency != 7 || s.ClaimRoundInterval != 222 {
+		t.Fatalf("首启值未按配置落库（或被二次打开覆盖）: %+v", s)
+	}
+	// 比较基准是**本次运行**的配置：库里的 `p@ss` ≠ 本进程的 `other`
+	// ⇒ `admin_key_is_default=false`。这正是 A3 对照实验里
+	// 「env=8888 重启一个库里存着 7777 的实例 → false」那条。
+	if s.View().AdminKeyIsDefault {
+		t.Errorf("库值 p@ss ≠ 本进程配置 other，is_default 应为 false，实际 %+v", s.View())
+	}
+}
+
+// TestInitialSettingsDefaultsWithoutConfig 不配置时的首启值 = constants 回落值。
+func TestInitialSettingsDefaultsWithoutConfig(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "accounts.db"))
+	if err != nil {
+		t.Fatalf("打开账号库失败: %v", err)
+	}
+	defer st.Close()
+
+	s, err := settings.Load(st, store.DefaultInitialSettings())
+	if err != nil {
+		t.Fatalf("读取设置失败: %v", err)
+	}
+	if s.AdminKey != constants.FallbackAdminKey || s.GatewayKey != "" {
+		t.Errorf("密钥回落值不符: admin=%q gateway=%q", s.AdminKey, s.GatewayKey)
+	}
+	if s.QuotaRefreshInterval != 1800 || s.AccountConcurrency != 2 || s.ClaimRoundInterval != 3600 {
+		t.Errorf("整数回落值不符: %d/%d/%d（claim_round_interval 应为 3600 而非 0）",
+			s.QuotaRefreshInterval, s.AccountConcurrency, s.ClaimRoundInterval)
+	}
 }

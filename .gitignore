@@ -22,6 +22,9 @@
 /.env
 /config.local.*
 
+# e2e 隔离夹具（tools/e2e_panel.py 的可再生产物：临时账号库 / Edge profile / 下载 / 日志 / 被测 exe）
+/tools/e2e_home/
+
 # 编辑器 / 系统
 .idea/
 .vscode/

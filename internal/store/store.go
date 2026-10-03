@@ -23,6 +23,7 @@ import (
 
 	"github.com/LinYuanNull/zcode2api-go/internal/constants"
 	"github.com/LinYuanNull/zcode2api-go/internal/models"
+	"github.com/LinYuanNull/zcode2api-go/internal/settings"
 )
 
 // ErrNotFound 表示账号不存在。
@@ -74,8 +75,43 @@ type Store struct {
 	sorted []string // 按 created_at 升序的 id（与靶机列表顺序一致）
 }
 
+// Option 调整 Open 的首启行为。
+type Option func(*openConfig)
+
+type openConfig struct {
+	initial settings.Configured
+}
+
+// WithInitialSettings 指定**首启**写入 `meta` 的五项设置初值（对应环境变量
+// `ZCODE_ADMIN_KEY` / `ZCODE_GATEWAY_KEY` / `ZCODE_QUOTA_REFRESH_INTERVAL` /
+// `ZCODE_ACCOUNT_CONCURRENCY` / `ZCODE_CLAIM_ROUND_INTERVAL`）。
+//
+// 注意「首启」是字面意思：`init()` 用 `INSERT OR IGNORE`，已有值一律不动
+// （observations.md #23 —— 靶机也是「首启写库、之后以库为准」）。
+//
+// 未调用时用 `constants` 里的回落值。注意这**不是**一个可以从库里读回来的
+// 「默认值」：`admin_key_is_default` 比的是运行期配置值，见 settings.Configured。
+func WithInitialSettings(c settings.Configured) Option {
+	return func(oc *openConfig) { oc.initial = c }
+}
+
+// DefaultInitialSettings 是「什么都没配置」时的初值（全部取 constants 回落值）。
+func DefaultInitialSettings() settings.Configured {
+	return settings.NewConfigured(
+		constants.FallbackAdminKey,
+		constants.DefaultGatewayKey,
+		constants.DefaultQuotaRefreshInterval,
+		constants.DefaultAccountConcurrency,
+		constants.DefaultClaimRoundInterval,
+	)
+}
+
 // Open 打开（不存在则创建）账号库，建表、补齐默认设置项、载入内存快照。
-func Open(path string) (*Store, error) {
+func Open(path string, opts ...Option) (*Store, error) {
+	cfg := openConfig{initial: DefaultInitialSettings()}
+	for _, o := range opts {
+		o(&cfg)
+	}
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("创建数据目录失败: %w", err)
@@ -87,7 +123,7 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{path: path, db: db, byID: map[string]models.Account{}}
-	if err := s.init(); err != nil {
+	if err := s.init(cfg); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -104,7 +140,7 @@ func (s *Store) Path() string { return s.path }
 // Close 关闭库。
 func (s *Store) Close() error { return s.db.Close() }
 
-func (s *Store) init() error {
+func (s *Store) init(cfg openConfig) error {
 	for _, ddl := range schemaDDL {
 		if _, err := s.db.Exec(ddl); err != nil {
 			return fmt.Errorf("初始化 schema 失败: %w", err)
@@ -112,12 +148,16 @@ func (s *Store) init() error {
 	}
 	// 补齐默认设置项。用 INSERT OR IGNORE：已有值一律不动
 	// （这正是「密码首启写库、之后以库为准」的语义）。
+	//
+	// 五项全部取自配置初值 —— 实测 `ZCODE_QUOTA_REFRESH_INTERVAL` /
+	// `ZCODE_ACCOUNT_CONCURRENCY` / `ZCODE_CLAIM_ROUND_INTERVAL` 与
+	// `ZCODE_ADMIN_KEY` 一样，都是**首启默认值**而非运行期覆盖。
 	seed := []struct{ k, v string }{
-		{constants.MetaAdminKey, constants.DefaultAdminKey},
-		{constants.MetaGatewayKey, constants.DefaultGatewayKey},
-		{constants.MetaQuotaRefreshInterval, itoa(constants.DefaultQuotaRefreshInterval)},
-		{constants.MetaAccountConcurrency, itoa(constants.DefaultAccountConcurrency)},
-		{constants.MetaClaimRoundInterval, itoa(constants.DefaultClaimRoundInterval)},
+		{constants.MetaAdminKey, settings.NormalizeAdminKey(cfg.initial.AdminKey)},
+		{constants.MetaGatewayKey, cfg.initial.GatewayKey},
+		{constants.MetaQuotaRefreshInterval, itoa(cfg.initial.QuotaRefreshInterval)},
+		{constants.MetaAccountConcurrency, itoa(cfg.initial.AccountConcurrency)},
+		{constants.MetaClaimRoundInterval, itoa(cfg.initial.ClaimRoundInterval)},
 	}
 	for _, it := range seed {
 		if _, err := s.db.Exec(`INSERT OR IGNORE INTO meta(key, value) VALUES(?, ?)`, it.k, it.v); err != nil {
