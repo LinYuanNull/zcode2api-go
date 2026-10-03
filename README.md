@@ -18,7 +18,13 @@ OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 
 `/v1/messages` 保序改写出站 + 逐字节透传响应（含 SSE 逐帧 flush）；`/v1/chat/completions`
 白名单重建出站 + 解析上游响应转成 OpenAI 形状（JSON / SSE）。调度器按「逐个账号试到成功」
 实现，错误分类（401/403/402/429/5xx/传输失败/客户端错）与冷却逐条对齐基线。
-额度与验证码求解**仍是占位**，见 A5–A6。
+
+**A5 进行中 —— 登录链路已接通**：`POST /admin/api/login/start` 会真的去打上游
+`oauth/cli/init`（`flow_id` 用**上游**给的那个），`GET /admin/api/login/poll/{flow_id}`
+逐次打上游 `oauth/cli/poll` 并原样透传 `status`；未知 / 过期 flow 本地回 `expired`
+（零出站）。出站头与体已用本地 MITM 抓包**逐字节**对照样本。
+额度查询（`quota`）与套餐领取（`claim`）**仍是占位**，见 A5 剩余项；`ready` 之后把凭据
+落库成账号这一步**未采样**（需真实账号），因此只透传状态、不伪造账号。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
@@ -27,7 +33,7 @@ OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 
 | A2 | 账号池与存储（store / models / fingerprint / settings / constants） | ✅ |
 | A3 | 管理 API（22 路由 + 鉴权 + settings 读写） | ✅ |
 | A4 | 转发链路（调度器 / body 变换 / SSE / 错误分类） | ✅ |
-| A5 | 额度、领取、登录 | ⬜ |
+| A5 | 额度、领取、登录 | 🟡 登录 ✅ · 额度 ⬜ · 领取 ⬜ |
 | A6 | 验证码（Go 自写 CDP 客户端） | ⬜ |
 | A7 | 发布 v0.1.0 | ⬜ |
 

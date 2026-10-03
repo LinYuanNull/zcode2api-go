@@ -1,21 +1,19 @@
 // Package oauth 账号登录：OAuth 设备码流程。
 //
-// A3 落地的是**流程登记表**（发起 → 轮询 → 完成/失败/过期），因为它的语义
-// 可以从 A1 样本逐条证实：
+// 语义来自实测样本（`docs/contract/admin/11..12` 与 `docs/contract/outbound-admin/`）：
 //
 //   - `11-login-start.POST.json`：成功返回 `{flow_id, authorize_url, expires_in}`，
-//     `flow_id` 为 32 位 hex，`expires_in` = 300；上游不可达 → 502 `{detail:"登录初始化失败: …"}`。
+//     `expires_in` **固定 300**；上游不可达 → 502 `{detail:"登录初始化失败: …"}`。
 //   - `12-login-poll-unknown.GET.json`：**未知 flow_id 返回 200 `{status:"expired"}`**，
-//     不是 404；已知 flow 的其余取值是 `pending` / `ready` / `failed`（`failed` 附 `message`）。
-//
-// **发起**这一步要打上游（拿设备码 / 授权地址），属 A5；这里只定义 `Starter`
-// 接口与「未配置」默认实现，保证路由可用、语义可测，且不会假装成功。
+//     不是 404。
+//   - **`flow_id` 就是上游 `oauth/cli/init` 返回的那个**（32 位 hex，实测三值全等，
+//     outbound-admin 3.6）⇒ 会话标识的所有权在**上游**，本包必须沿用而不是另生成。
+//   - 轮询**逐次都打上游**（没有本地时间门控）；上游报错后不再打（outbound-admin 3.5）。
 package oauth
 
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"sync"
 	"time"
 )
@@ -29,11 +27,14 @@ const (
 )
 
 // DefaultExpiresIn 是发起登录时给客户端展示的有效期（秒）。
-// 依据：`11-login-start.POST.json` 的 `expires_in` = 300。
+// 依据：`11-login-start.POST.json` 的 `expires_in` = 300，且实测是**固定值**
+// （上游回的是 `expires_at` 时间戳，管理侧换算成固定 300，outbound-admin 3.4）。
 const DefaultExpiresIn = 300
 
-// ErrUpstreamUnavailable 表示「发起登录需要上游调用，本阶段未实现」。
-var ErrUpstreamUnavailable = errors.New("登录初始化需要上游 OAuth 调用（属于 A5 阶段）")
+// TokenLen 是 OAuth 请求 Bearer 的长度（64 位小写 hex）。
+// 依据：outbound-admin 3.1/3.2 —— 该令牌**进程内随机生成、不落盘**，
+// 且与上游回传的 `poll_token` 同值。
+const TokenLen = 64
 
 // Account 是登录成功后落库的账号信息。
 type Account struct {
@@ -44,23 +45,6 @@ type Account struct {
 	Expire time.Time
 }
 
-// Starter 发起一次设备码登录，返回给用户打开的授权地址与有效期（秒）。
-//
-// `flowID` 由本包的 Registry 生成后传入 —— 会话标识的所有权在本地（它是
-// 轮询用的键），上游只需要知道「要给哪个会话授权」。expiresIn <= 0 时调用方
-// 回落到 DefaultExpiresIn。
-type Starter interface {
-	Start(flowID, label string) (authorizeURL string, expiresIn int, err error)
-}
-
-// Unavailable 是 Starter 的占位实现：明确报错，不伪造 authorize_url。
-type Unavailable struct{}
-
-// Start 实现 Starter。
-func (Unavailable) Start(string, string) (string, int, error) {
-	return "", 0, ErrUpstreamUnavailable
-}
-
 // Flow 是一次登录会话。
 type Flow struct {
 	ID        string
@@ -69,6 +53,15 @@ type Flow struct {
 	Message   string
 	Account   *Account
 	ExpiresAt time.Time
+
+	// Token 是这条 flow 的 OAuth Bearer（64 hex）。init 与后续 poll **复用同一个值**。
+	Token string
+	// PollIntervalSec 是上游给的轮询建议间隔（本样本 2）。**不是出站门控**，
+	// 实测只作展示用；留着是为了把它放进会话状态、便于诊断。
+	PollIntervalSec int
+	// UpstreamStopped 表示这条 flow 的上游轮询已被停掉（某次出站失败后）。
+	// 实测：出站失败后管理侧不再打上游，直接回缓存状态（outbound-admin 3.5）。
+	UpstreamStopped bool
 }
 
 // Registry 是内存里的登录会话表。
@@ -86,33 +79,27 @@ func NewRegistry() *Registry {
 // SetClock 注入时钟（测试用）。
 func (r *Registry) SetClock(now func() time.Time) { r.now = now }
 
-// NewFlowID 生成 32 位 hex 的 flow_id（与样本里 `flow_id` 的形态一致）。
-func NewFlowID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+// NewFlowID 生成 32 位 hex 的标识（**仅测试与兜底用**）。
+//
+// 生产路径的 `flow_id` 来自上游（outbound-admin 3.6），不要用它顶替。
+func NewFlowID() string { return hexOf(16) }
+
+// NewToken 生成一条 flow 的 OAuth Bearer（64 位小写 hex）。
+//
+// 与 `poll_token` 同值、**不落盘** —— 它只活在内存里的 Flow 上。
+func NewToken() string { return hexOf(TokenLen / 2) }
+
+func hexOf(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand 在正常系统上不会失败；真失败时给一个**可预测**的会话令牌
+		// 比直接报错更危险，所以 panic。
 		panic("oauth: 无法读取随机源: " + err.Error())
 	}
-	return hex.EncodeToString(b[:])
+	return hex.EncodeToString(b)
 }
 
-// Create 登记一个新会话。
-func (r *Registry) Create(label string, expiresIn time.Duration) *Flow {
-	if expiresIn <= 0 {
-		expiresIn = DefaultExpiresIn * time.Second
-	}
-	f := &Flow{
-		ID:        NewFlowID(),
-		Label:     label,
-		Status:    StatusPending,
-		ExpiresAt: r.now().Add(expiresIn),
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.flows[f.ID] = f
-	return f
-}
-
-// Put 直接登记一个指定 id 的会话（测试用，便于断言固定 flow_id）。
+// Put 登记（或覆盖）一条会话。
 func (r *Registry) Put(f *Flow) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -123,6 +110,36 @@ func (r *Registry) Put(f *Flow) {
 		f.ExpiresAt = r.now().Add(DefaultExpiresIn * time.Second)
 	}
 	r.flows[f.ID] = f
+}
+
+// Lookup 取一条会话的**副本**（调用方改不到表内的状态）。
+func (r *Registry) Lookup(id string) (Flow, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	f, ok := r.flows[id]
+	if !ok {
+		return Flow{}, false
+	}
+	return *f, true
+}
+
+// StopUpstream 停掉一条会话的上游轮询。
+func (r *Registry) StopUpstream(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if f, ok := r.flows[id]; ok {
+		f.UpstreamStopped = true
+	}
+}
+
+// SetStatus 改一条会话的状态。
+func (r *Registry) SetStatus(id, status, message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if f, ok := r.flows[id]; ok {
+		f.Status = status
+		f.Message = message
+	}
 }
 
 // SetExpiry 更新一个会话的有效期（发起成功后按上游给的 expires_in 校准）。
@@ -137,21 +154,21 @@ func (r *Registry) SetExpiry(id string, seconds int) {
 	}
 }
 
-// Poll 查询一个会话的状态。
+// Expire 判定一条会话是否已过期，过期则落状态。
 //
-// **未知 id 与已过期一律返回 `expired`**（HTTP 200），这是样本明确的行为：
+// **未知 id 与已过期一律 `expired`**（HTTP 200），这是样本明确的行为：
 // UI 靠 `expired` 收尾，不靠 404。
-func (r *Registry) Poll(id string) (status, message string, acc *Account) {
+func (r *Registry) Expire(id string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	f, ok := r.flows[id]
 	if !ok {
-		return StatusExpired, "", nil
+		return true
 	}
 	if f.Status != StatusReady && f.Status != StatusFailed && !r.now().Before(f.ExpiresAt) {
 		f.Status = StatusExpired
 	}
-	return f.Status, f.Message, f.Account
+	return f.Status == StatusExpired
 }
 
 // Complete 把一个会话标记为成功（授权完成，账号已入池）。

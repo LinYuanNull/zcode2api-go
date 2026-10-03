@@ -10,8 +10,8 @@
 //	help           显示帮助
 //
 // 分期方案见 ModelMux 仓库的 docs/zcode-native-port-plan.md。
-// 当前进度：A0 骨架 ✅ / A1 契约固化 ✅ / A2 账号池与存储 ✅ / **A3 管理 API ✅**；
-// A4 转发链路、A5 额度与领取、A6 验证码、A7 发版待做。
+// 当前进度：A0 骨架 ✅ / A1 契约固化 ✅ / A2 账号池与存储 ✅ / A3 管理 API ✅ /
+// A4 转发链路 ✅ / **A5 登录链路 ✅（额度、领取待做）**；A6 验证码、A7 发版待做。
 package main
 
 import (
@@ -243,10 +243,15 @@ func runSetAdminKey(args []string) error {
 	return nil
 }
 
-// ── 尚未实现的子命令（A5 / A6）─────────────────────────────
+// ── 尚未实现的子命令（A5 余额 / 领取、A6）───────────────────
 
+// runLogin 尚未接通。OAuth 服务层（`internal/oauth`）与两条管理 API 已可用，
+// 面板登录就是走它们；缺的是 **`ready` 之后把凭据落库成账号** 这一步 ——
+// 它需要真实账号走完整授权才能采到，属未覆盖分支（见
+// docs/contract/outbound-admin/observations.md 第九节），所以这里不假装能登录。
 func runLogin(_ []string) error {
-	return errors.New("login 尚未实现：OAuth 登录链路属于 A5 阶段（当前可先在上游面板完成登录后导入账号库）")
+	return errors.New("login 子命令尚未接通：OAuth 链路已由管理面板承载（/admin/login），" +
+		"`ready` 之后凭据落库成账号这一步未采样，见 docs/contract/outbound-admin/observations.md 第九节")
 }
 
 func runClaim(_ []string) error {

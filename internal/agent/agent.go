@@ -51,11 +51,14 @@ const DialTimeout = 30 * time.Second
 // Client 是出站客户端。
 type Client struct {
 	proxied *http.Client // 走环境代理（HTTPS_PROXY / HTTP_PROXY / NO_PROXY）
-	direct  *http.Client // 强制直连
 
 	// messagesURL 允许测试指向本地假上游。生产恒为 MessagesURL 常量
 	// （`New()` 不设它 ⇒ 零值回落到常量）。
 	messagesURL string
+
+	// a5Base 允许测试替换 A5 出站（OAuth + 额度）的 origin，见 `SetA5BaseForTest`。
+	// 生产恒为空 ⇒ 用 a5.go 里的端点常量。
+	a5Base string
 }
 
 // endpoint 返回实际使用的消息转发端点。
@@ -68,7 +71,7 @@ func (c *Client) endpoint() string {
 
 // New 建一个出站客户端。
 func New() *Client {
-	return &Client{proxied: newHTTPClient(true), direct: newHTTPClient(false)}
+	return &Client{proxied: newHTTPClient()}
 }
 
 // SetMessagesURLForTest 让本客户端指向本地假上游，**仅供测试**。
@@ -79,14 +82,12 @@ func New() *Client {
 // ⚠️ 生产代码不要调用它 —— 那等于把端点变成可配的，等于放弃契约。
 func (c *Client) SetMessagesURLForTest(u string) { c.messagesURL = u }
 
-// Direct 返回**强制直连**的客户端。
+// Proxied 返回走环境代理的客户端。
 //
-// 用途（A4 起就定下的语义，A5/A6 落地）：billing 与验证码链路**必须直连**，
-// 走代理会触发上游风控。这里把它做成独立客户端，而不是给调用方一个开关 ——
-// 免得将来有人顺手复用带代理的那个。
-func (c *Client) Direct() *http.Client { return c.direct }
-
-// Proxied 返回走环境代理的客户端（消息转发用）。
+// **只有这一个出站客户端**：A4 曾按「billing 与验证码必须直连」的假设留过一个
+// `Direct()` 变体，但 A5 实测**推翻了**它 —— 管理侧出站（**含 billing**）
+// 同样走 `HTTPS_PROXY`（observations.md 二）。没有实测支持的分支不留，
+// 免得将来有人顺手用它把流量打直连、在上游风控前暴露真实出口 IP。
 func (c *Client) Proxied() *http.Client { return c.proxied }
 
 // PostMessages 发送一条消息转发请求。`token` 是账号凭据明文。
@@ -145,7 +146,7 @@ func (tooLargeError) Error() string { return "出站请求体超过上限" }
 
 var errTooLarge = tooLargeError{}
 
-// newHTTPClient 建一个出站客户端。
+// newHTTPClient 建出站客户端。
 //
 // 三处刻意为之（每一处都对应一条实测事实或一条已知的 Go 陷阱）：
 //
@@ -156,8 +157,9 @@ var errTooLarge = tooLargeError{}
 //  2. **信任 `SSL_CERT_FILE` / `SSL_CERT_DIR`**。httpx 在 `trust_env=True` 时读它们
 //     （observations.md #8），这是把流量导向本地假上游的另一半前提。
 //     注意 Go 在 Windows 上**不认**这两个变量，必须自己加载。
-//  3. **代理读环境变量**，与 #7 一致；`direct=true` 时不读。
-func newHTTPClient(useProxy bool) *http.Client {
+//  3. **代理读环境变量**，与 #7 一致。**所有**出站都走这一条路径 ——
+//     A5 实测管理侧出站（含 billing）同样走代理，没有直连分支（见 `Proxied`）。
+func newHTTPClient() *http.Client {
 	tr := &http.Transport{
 		DialContext:           (&net.Dialer{Timeout: DialTimeout}).DialContext,
 		ForceAttemptHTTP2:     false,
@@ -168,9 +170,7 @@ func newHTTPClient(useProxy bool) *http.Client {
 		TLSHandshakeTimeout:   15 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig:       &tls.Config{RootCAs: rootCAs()},
-	}
-	if useProxy {
-		tr.Proxy = http.ProxyFromEnvironment
+		Proxy:                 http.ProxyFromEnvironment,
 	}
 	return &http.Client{Transport: tr}
 }

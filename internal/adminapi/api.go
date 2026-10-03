@@ -46,13 +46,12 @@ type Deps struct {
 	// Guard 是管理面鉴权器。为 nil 时不做鉴权（仅测试用；生产路径由 server 必传）。
 	Guard *authadmin.Guard
 
-	Ring    *reqlog.Ring
-	Fp      *fingerprint.Generator
-	OAuth   *oauth.Registry
-	Starter oauth.Starter
-	Quota   quota.Refresher
-	Claimer claim.Claimer
-	Captcha captcha.Provider
+	Ring     *reqlog.Ring
+	Fp       *fingerprint.Generator
+	Sessions oauth.Sessions
+	Quota    quota.Refresher
+	Claimer  claim.Claimer
+	Captcha  captcha.Provider
 
 	// Settings 是设置的内存快照（为 nil 时按 Store 建一个）。
 	Settings *settings.Cache
@@ -83,11 +82,8 @@ func New(d Deps) *API {
 	if d.Fp == nil {
 		d.Fp = fingerprint.New()
 	}
-	if d.OAuth == nil {
-		d.OAuth = oauth.NewRegistry()
-	}
-	if d.Starter == nil {
-		d.Starter = oauth.Unavailable{}
+	if d.Sessions == nil {
+		d.Sessions = oauth.NewService(nil, nil)
 	}
 	if d.Quota == nil {
 		d.Quota = quota.Unavailable{}

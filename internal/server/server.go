@@ -25,6 +25,7 @@ import (
 	"net/http"
 
 	"github.com/LinYuanNull/zcode2api-go/internal/adminapi"
+	"github.com/LinYuanNull/zcode2api-go/internal/agent"
 	"github.com/LinYuanNull/zcode2api-go/internal/authadmin"
 	"github.com/LinYuanNull/zcode2api-go/internal/buildinfo"
 	"github.com/LinYuanNull/zcode2api-go/internal/captcha"
@@ -71,9 +72,15 @@ type Config struct {
 	// MonitoringKeep 覆盖请求监控环形容量；<=0 用 constants.MonitoringKeep。
 	MonitoringKeep int
 
-	// ── 以下为可选接缝（A5/A6 接上）。nil 时用「显式未实现」的实现，
-	//    对应分支一律 501，绝不伪造成功。
-	Starter oauth.Starter
+	// ── 以下为可选接缝（A5/A6 接上）。
+	//
+	// Sessions 是管理面登录两条路由的实现。nil 时**默认接真实实现**
+	// （`oauth.NewService` + 真实出站客户端）—— 这不是「未实现」，
+	// A5 已把 OAuth 设备码链路接通；只有需要上游但当前不可达时才报错。
+	Sessions oauth.Sessions
+
+	// Quota / Claimer / Captcha 为 nil 时用「显式未实现」的实现，
+	// 对应分支一律 501，绝不伪造成功（A5-3 / A6 接上）。
 	Quota   quota.Refresher
 	Claimer claim.Claimer
 	Captcha captcha.Provider
@@ -134,12 +141,20 @@ func New(cfg Config) *Server {
 	guard := authadmin.New(adminKey)
 	ring := reqlog.New(keep)
 
+	// 登录链路默认接真实上游（A5-2）：会话表 + 出站客户端。
+	//
+	// 出站客户端是**同一条**走环境代理的实例（A5 实测：管理侧出站含 billing 也走
+	// `HTTPS_PROXY`，不存在直连分支）。配置显式给了 Sessions 就用它（测试用）。
+	sessions := cfg.Sessions
+	if sessions == nil {
+		sessions = oauth.NewService(oauth.NewRegistry(), agent.New())
+	}
+
 	api := adminapi.New(adminapi.Deps{
 		Store:      cfg.Store,
 		Guard:      guard,
 		Ring:       ring,
-		OAuth:      oauth.NewRegistry(),
-		Starter:    cfg.Starter,
+		Sessions:   sessions,
 		Quota:      cfg.Quota,
 		Claimer:    cfg.Claimer,
 		Captcha:    cfg.Captcha,

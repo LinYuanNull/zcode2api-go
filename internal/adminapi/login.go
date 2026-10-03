@@ -3,10 +3,8 @@ package adminapi
 import (
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/LinYuanNull/zcode2api-go/internal/httpx"
-	"github.com/LinYuanNull/zcode2api-go/internal/oauth"
 )
 
 // ── POST /admin/api/login/start ─────────────────────────────
@@ -14,7 +12,7 @@ import (
 // 键顺序取自样本 `11-login-start.POST.json`：flow_id, authorize_url, expires_in。
 //
 // 错误分支按样本 notes：上游不可达 → **502** `{"detail":"登录初始化失败: …"}`。
-// A3 的 `oauth.Unavailable` 走的就是这条 —— 明确报错，不伪造 authorize_url。
+// 没有可用上游时走的就是这条 —— 明确报错，不伪造 authorize_url。
 type loginStartRequest struct {
 	Label string `json:"label"`
 }
@@ -32,21 +30,16 @@ func (a *API) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 	}
 	label := strings.TrimSpace(req.Label)
 
-	// 会话先登记、再打上游：flow_id 由本地生成（它是轮询的键），
-	// 上游失败时把它撤掉，避免留下永远 pending 的僵尸会话。
-	flow := a.d.OAuth.Create(label, oauth.DefaultExpiresIn*time.Second)
-	url, expiresIn, err := a.d.Starter.Start(flow.ID, label)
+	// flow_id 由**上游**决定（实测三值全等，outbound-admin 3.6），所以这里不再本地
+	// 生成会话再映射。失败时不留下半截会话：`Start` 只在拿到 flow_id 与
+	// authorize_url 之后才登记。
+	flowID, url, expiresIn, err := a.d.Sessions.Start(r.Context(), label)
 	if err != nil {
-		a.d.OAuth.Forget(flow.ID)
 		httpx.WriteDetail(w, http.StatusBadGateway, "登录初始化失败: "+err.Error())
 		return
 	}
-	a.d.OAuth.SetExpiry(flow.ID, expiresIn)
-	if expiresIn <= 0 {
-		expiresIn = oauth.DefaultExpiresIn
-	}
 	httpx.WriteJSON(w, http.StatusOK, loginStartResponse{
-		FlowID:       flow.ID,
+		FlowID:       flowID,
 		AuthorizeURL: url,
 		ExpiresIn:    expiresIn,
 	})
@@ -56,12 +49,15 @@ func (a *API) handleLoginStart(w http.ResponseWriter, r *http.Request) {
 //
 // 未知 flow_id 与已过期都返回 200 `{"status":"expired"}`（样本
 // `12-login-poll-unknown.GET.json` 明确：**不是 404**）。`failed` 附 `message`。
+//
+// 轮询会**逐次打上游**（实测没有本地时间门控，outbound-admin 3.5），所以这里
+// 用请求自己的 ctx —— 客户端断开时应当立刻放弃这次上游调用。
 type loginPollResponse struct {
 	Status  string `json:"status"`
 	Message string `json:"message,omitempty"`
 }
 
 func (a *API) handleLoginPoll(w http.ResponseWriter, r *http.Request) {
-	status, message, _ := a.d.OAuth.Poll(r.PathValue("flow_id"))
+	status, message, _ := a.d.Sessions.Poll(r.Context(), r.PathValue("flow_id"))
 	httpx.WriteJSON(w, http.StatusOK, loginPollResponse{Status: status, Message: message})
 }

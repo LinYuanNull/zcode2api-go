@@ -14,17 +14,27 @@
 //  2. **`volatile` 豁免**：随机量与时间戳（账号 id、指纹、`ts`、`created_at`、
 //     `secret`…）不可能复现，逐条列出「允许取值不同、但**键名/键序/类型**仍须一致」
 //     的叶子路径。
-//  3. **`divergence` 已知分歧**：需要上游调用的分支（OAuth 发起、验证码配置）
-//     在 A3 显式报错，与样本的成功响应必然不同。这类**不跳过** —— 改为精确断言
-//     我们自己返回的状态码与响应体前缀，把「分歧」也钉成契约。
+//  3. **`divergence` 已知分歧**：需要上游调用的分支在 A3 显式报错，与样本的成功
+//     响应必然不同。这类**不跳过** —— 改为精确断言我们自己返回的状态码与响应体
+//     前缀，把「分歧」也钉成契约。① OAuth 发起的分歧已在 A5-2 消除（见 steps 里
+//     `11-login-start` 的说明）；只余 ② 验证码配置（属 A6）。
 //
 // 空池依赖：全部网关样本都要求「账号池无可用账号」（否则会走转发链路，属 A4）。
 // 本测试的步骤顺序天然满足 —— 唯一的可用账号在 `05-accounts-delete-ok` 被删掉，
 // 而网关样本在其之后。**不要重排 steps。**
+//
+// **上游依赖**：登录链路（`11`/`12`）在 A5-2 之后会真的去打上游。契约测试只验
+// **管理 API 的响应形状**，不该受 z.ai 可达性影响（CI 上不可靠），所以这里给
+// `Config.Sessions` 注入一个**假上游**（`a5Upstream` + 真实 `oauth.Service`）。
+// OAuth 链路的真实出站由 `internal/oauth` 的单元测试（`httptest` +
+// `SetA5BaseForTest`）覆盖 —— 那边才该依赖「下游可被替换」这件事。
+// 其余步骤（网关转发）本来就会尝试出站，但两条分支（401 换号 / 传输失败）都收敛
+// 到同一个 503 响应，所以不受可达性影响。
 package contract_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -36,7 +46,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/LinYuanNull/zcode2api-go/internal/agent"
 	"github.com/LinYuanNull/zcode2api-go/internal/constants"
+	"github.com/LinYuanNull/zcode2api-go/internal/oauth"
 	"github.com/LinYuanNull/zcode2api-go/internal/server"
 	"github.com/LinYuanNull/zcode2api-go/internal/settings"
 	"github.com/LinYuanNull/zcode2api-go/internal/store"
@@ -86,6 +98,31 @@ const (
 	bearerGW    = "gw"
 	bearerWrong = "wrong"
 )
+
+// a5Upstream 是契约回放用的**假上游**：把真实的 `oauth.Service` 缝到一个固定的
+// `agent.OAuthFlow` 上，于是 `POST /admin/api/login/start` 走的仍是**真实**的
+// Service 逻辑（校验 flow_id/authorize_url、登记会话、换算固定 300 秒），
+// 但不再依赖 z.ai 的可达性。
+//
+// 为什么不是断言「上游返回什么」：上游回什么不是本项目的契约；本项目对外承诺的是
+// **管理 API 的形状**（键名/键序/`expires_in` 恒 300），以及「有登录发起就登记会话、
+// 没有就明确报错」。出站细节归 `internal/oauth` 的单元测试。
+type a5Upstream struct{}
+
+// OAuthInit 实现 oauth.Upstream。返回的 flow_id 是 32 位 hex（与上游同形）。
+func (a5Upstream) OAuthInit(context.Context, string, string) (agent.OAuthFlow, error) {
+	return agent.OAuthFlow{
+		FlowID:          "0123456789abcdef0123456789abcdef",
+		AuthorizeURL:    "https://chat.z.ai/api/oauth/authorize?client_id=contract-stub",
+		PollIntervalSec: 2,
+	}, nil
+}
+
+// OAuthPoll 实现 oauth.Upstream。样本 `12-login-poll-unknown` 用的是**未知 flow_id**，
+// Service 会在本地直接回 `expired`、根本不走到这里；保留实现是为了让假上游完整。
+func (a5Upstream) OAuthPoll(context.Context, string, string) (string, error) {
+	return oauth.StatusPending, nil
+}
 
 type step struct {
 	file string
@@ -160,14 +197,14 @@ var steps = []step{
 	{file: "admin/10-account-refresh-nonjwt.POST.json", bearer: bearerAdmin},
 	{file: "admin/10-account-refresh-404.POST.json", bearer: bearerAdmin},
 
-	// ── 已知分歧 ①：OAuth 发起需要打上游（A5）────────────────
-	// 样本当时上游可达，采到 200 + authorize_url；A3 的 Starter 是
-	// `oauth.Unavailable`，按「未实现必须明确报错」返回 502。
+	// ── A5-2：OAuth 发起已接通（不再是与样本不符的 502）──────────
+	// 样本采到 200 + authorize_url（采样时上游可达）。A5-2 之后本实现走**真实的**
+	// oauth.Service；这里把上游换成假上游（见 a5Upstream 的说明），于是：
+	//   flow_id / authorize_url 由上游生成 ⇒ 列 volatile；
+	//   expires_in 恒 300（A5 实测：上游回 expires_at，管理侧换算成固定 300）。
 	{file: "admin/11-login-start.POST.json", bearer: bearerAdmin,
-		body:       `{"label":"contract"}`,
-		divergence: "OAuth 发起属 A5：A3 显式返回 502「登录初始化失败: …」，不伪造 authorize_url",
-		wantStatus: http.StatusBadGateway,
-		wantBody:   `{"detail":"登录初始化失败: `},
+		body:     `{"label":"contract"}`,
+		volatile: []string{"flow_id", "authorize_url"}},
 
 	{file: "admin/12-login-poll-unknown.GET.json", bearer: bearerAdmin},
 
@@ -286,7 +323,12 @@ func TestA3SampleReplay(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = st.Close() })
 
-	srv := server.New(server.Config{Store: st, Configured: sampledConfig})
+	srv := server.New(server.Config{
+		Store:      st,
+		Configured: sampledConfig,
+		// 登录链路换成假上游（真实 Service + 固定 flow）——见 a5Upstream。
+		Sessions: oauth.NewService(oauth.NewRegistry(), a5Upstream{}),
+	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 

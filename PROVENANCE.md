@@ -247,9 +247,85 @@ A4 的判据**不是** `docs/contract/*.json`（那些是**入站**的请求/响
 | 上游自带前端面板（`tools/e2e_panel.py`，真浏览器 CDP 驱动 `frontend/`） | 38/38（A4 未破） |
 | `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
 
+## 管理侧出站实现依据（A5）
 
+A5 的判据是**管理面的出站**（面板 → `zcode.z.ai`）。它与 A4 的转发出站并列，但**头集合
+彼此不同、不能统一**：额度查询带**全套客户端指纹头**、OAuth 极简（只有 Authorization +
+UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbound-admin/`：
 
-账号池为空，因此下列分支本轮**未能采到**，实现时不得凭猜测补全，需在拿到真实账号后
+- **`observations.md`** —— 九节实测记录：端点、**「管理侧出站也走代理」的更正**、OAuth
+  令牌来源与 `flow_id` 归属、poll 无本地门控、额度三条并发共用一个 `X-Request-Id`、
+  claim 三条零出站、与 A4 的头差异、脱敏规则、未覆盖分支。
+- **5 个样本**（`01-oauth-init` … `05-plan-billing-balance`）—— 逐字请求头 + 解压后响应体。
+- **`fixtures/`** —— 10 条出站请求旁录（含 `_excluded` 记下的 A4 噪声）+ 13 条入站响应旁录
+  （覆盖 `refresh` 的两种形态：`result` 真查 / `message` 缓存）。
+
+采样方法：把靶机的 `HTTPS_PROXY` 指向 `tools/mitmupstream`（自签 CA + 叶子证书终结 TLS），
+`SSL_CERT_FILE` 指向该 CA，靶机跑在独立临时数据目录 + 注入的假 JWT 账号上。
+**管理侧出站同样走代理**这一条正是本轮实测确认的 —— A4 时期曾按「billing 必须直连」的
+假设在 `agent` 里留过一个 `Direct()` 变体，本轮实测推翻并**删除了它**（没有实测支持的分支
+不留，免得将来有人顺手用它把流量打直连、在上游风控前暴露真实出口 IP）。
+
+### 逐条实测钉死的判据
+
+| 判据 | 实测结论 |
+|---|---|
+| `flow_id` 归属 | 管理侧 `login/start` 返回的 id == 上游 `init` 的 `data.flow_id` == 上游 poll 路径里的 id，**三值 SHA-256 全等**（32 位 hex）⇒ 会话标识所有权在**上游**，本地不自生成 |
+| `login/start` 对上游的变换 | `expires_in` **固定 300**（上游给的是 `expires_at` 时间戳）；丢弃 `poll_token` / `logid` / `poll_interval_sec` |
+| OAuth Bearer | 64 位小写 hex，**进程内随机生成、不落盘**；`init` 的请求 Bearer == 响应 `poll_token`，后续 `poll` 复用**同一个** |
+| poll 节流 | **没有本地时间门控**：每次 poll 逐次打上游。上游偶发 429（非确定性）；**一旦某次出站失败，该 flow 后续 poll 不再打上游**（零出站）仍回缓存状态 |
+| 未知 flow | 本地直接回 `expired`（**零出站**），且 HTTP 是 **200** 不是 404 |
+| 额度查询并发 | `usage` + `billing/current` + `billing/balance` 同毫秒并发（≤1ms），**共用同一个 `X-Request-Id`**（进程级、逐批生成、uuid4） |
+| 凭据失效的状态码 | **不一致**：`usage` → **404**（gzip 的 `404 page not found` 文本）、`billing/current` → **401**、`billing/balance` → **401**（后两者空体、无 `Content-Encoding`） |
+| 指纹头平台映射 | `X-Os-Category` = `macos`(darwin) / `windows`(win32)；`X-Platform` = `<platform>-<arch>`；`X-Os-Version` 与 platform 严格同域；`X-Release-Channel` 恒 `stable`；`X-Title` 逐字 `Z Code@electron` |
+| GET 上的 `Content-Type` | 额度查询是 GET，却**真的带** `Content-Type: application/json`（照发，不「修正」） |
+| 额度查询触发条件 | 只对 `status=active` 的 **JWT** 账号查上游；触发点 = `POST /admin/api/accounts`（主）、启动自刷、`refresh`；转 `invalid` 后**永不再查**（`refresh` 回缓存、零出站） |
+| `refresh` 的两种响应形态 | FRESH（真查上游）走 `{"ok":false,"result":{"error":…}}`；CACHED（缓存 / invalid）走 `{"ok":false,"message":…}`。**判据是键名**（`result` vs `message`），两者 `account.status` 都是 `invalid` |
+| claim 出站 | `claim/preview` / `claim` / `claim/manual` / `claim/captcha-config` **全部零出站** |
+
+### 一处必须自己解的坑（Go 特有）
+
+出站头**必须显式**发 `Accept-Encoding: gzip, deflate`（契约逐字固定）。而 Go 的 `Transport`
+只在「**它自己**加上的 `Accept-Encoding`」上做透明解压 —— 显式设值后它把压缩字节**原样**
+交出来。实测上游这几个端点回 gzip（连 404 的 `404 page not found` 都是 gzip 的），
+所以 `agent.ReadBody` 必须按 `Content-Encoding` **自行解压**（deflate 与 httpx 同语义：
+先按 zlib 试、失败再按裸 deflate；未支持的编码**明确报错**而不是把压缩字节当明文）。
+
+### 验收（全部来自真实运行）
+
+| 验收项 | 结果 |
+|---|---|
+| 真实二进制端到端 `POST /admin/api/login/start` | `{"flow_id","authorize_url","expires_in"}` 键序正确；`flow_id` 32 位 hex；`expires_in` = 300；`authorize_url` 来自上游 |
+| 真实二进制端到端 poll（未知 flow） | `{"status":"expired"}` + HTTP 200，且 MITM 抓包记录数**不变**（零出站） |
+| 真实二进制端到端 poll（真实 flow，连续 3 次） | 每次 `{"status":"pending"}`，MITM 记录数 2 → 5（**+3 = 逐次都打上游**） |
+| 无凭证 | 401（鉴权在路由匹配之后，仍生效） |
+| **出站逐字节对照**（把本实现的 `HTTPS_PROXY` 指向 `tools/mitmupstream` 抓自己） | `init`：POST `/api/v1/oauth/cli/init`，头**恰好** 7 个（Accept / Accept-Encoding / Authorization / Connection / Content-Length / Content-Type / User-Agent），`User-Agent: python-httpx/0.28.1`，体逐字 `{"provider":"zai"}` —— 与样本 `01` 一致 |
+| 同上，`poll` | GET `/api/v1/oauth/cli/poll/<flow_id>`，头**恰好** 5 个（无 `Content-Type`），Bearer 与 `init` **同值**、64 hex —— 与样本 `02` 一致 |
+| 单测（`internal/agent` 8 例 + `internal/oauth` 12 例） | 全绿（假上游 `httptest` + `SetA5BaseForTest`，不依赖 z.ai 可达） |
+| 契约回放（A3 的 43 条 + 空池分支） | 全绿（`11-login-start` 的「已知分歧」已消除，改为 volatile `flow_id`/`authorize_url`） |
+| `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
+
+### A5 未覆盖（不凭猜测补全）
+
+1. **OAuth 成功分支**：poll 的 `ready` / `finished` 形状、回跳 `code` 换票响应 —— 需真实账号。
+   因此本实现只**原样透传** `status`，**不伪造账号**（`Account` 落库留给拿到真实账号后的步骤）。
+2. **poll 的 `failed` 语义态**：只诱发到 429（限流），未拿到 `status=failed`。
+3. **额度查询的 `200` 成功体**：`usage` / `billing/*` 在凭据**有效**时的结构，以及它如何映射到
+   账号对象的 `quota` / `plan` / `plans` —— 本轮全是 401/404。**A5-3 实现时必须对这一分支显式报错。**
+4. **`claim` 领取成功路径**：验证码换票、`plans` 填充、`activation_error` 取值。
+5. **`quota_refresh_interval` 的窗口起算点**：已知默认 1800、置 0 立即重查、进程启动快照。
+
+### 尚未接通的接缝
+
+- **`login` 子命令**：管理面板的登录链路已通（`/admin/api/login/start` + `poll`），
+  但 `zcode2api-go login` 这个 CLI 子命令未接通 —— 缺的是第 1 条（`ready` 之后凭据落库），
+  它未采样，所以 CLI 不假装能完成登录。
+- **`internal/quota` / `internal/claim` / `internal/captcha`**：仍是占位实现（对应分支 501），
+  见 A5-3 与 A6。
+
+### A4 未覆盖的分支（当时账号池为空）
+
+A4 采样时账号池为空，因此下列分支当时**未能采到**，实现时不得凭猜测补全，需在拿到真实账号后
 重新采样：
 
 - **有账号时的成功链路**：`/v1/messages`、`/v1/chat/completions` 的 200 / 流式响应形态；
@@ -257,7 +333,8 @@ A4 的判据**不是** `docs/contract/*.json`（那些是**入站**的请求/响
 - **额度相关**：`/admin/api/accounts/{id}/refresh`（JWT 账号的真实 `quota` / `plan` 结构）、
   `/admin/api/claim/preview` 的 `plans[]` 结构、`/admin/api/claim` 的成功 `outcomes[]`。
 - **OAuth 完成链路**：`/admin/api/login/poll/{flow_id}` 的 `ready` 分支（含 `account` 视图）
-  与 `failed` 分支的 `message` 文案。
+  与 `failed` 分支的 `message` 文案。（**额度与领取两条仍未覆盖**；OAuth 的发起/轮询与
+  凭据失效分支已在 A5 补齐，见上一节。）
 - **验证码**：`/admin/api/claim/manual` 在拿到浏览器端 `verify_param` 后的成功分支。
 
 ### 落盘契约（A2）未覆盖的分支
