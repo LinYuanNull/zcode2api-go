@@ -305,6 +305,13 @@ UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbo
 | 契约回放（A3 的 43 条 + 空池分支） | 全绿（`11-login-start` 的「已知分歧」已消除，改为 volatile `flow_id`/`authorize_url`） |
 | `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
 
+**提交与 CI**：A5-1 的实测订正落地于 `2aa8b6d`，A5-2 落地于 `eaaf90a`
+（`feat(A5-2): 登录链路真实落地`）。CI run
+[`37157384935`](https://github.com/LinYuanNull/zcode2api-go/actions/runs/37157384935) **success** ——
+`gofmt` / `go vet` / `go build` / `go test` / 契约键序五步全绿。
+其中 `go test` 跑在 **ubuntu-latest** 上，正好验证了「契约回放已**不依赖 z.ai 可达性**」
+这一点（否则登录样本在 CI 上必然随机失败）。
+
 ### A5 未覆盖（不凭猜测补全）
 
 1. **OAuth 成功分支**：poll 的 `ready` / `finished` 形状、回跳 `code` 换票响应 —— 需真实账号。
@@ -322,6 +329,11 @@ UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbo
   它未采样，所以 CLI 不假装能完成登录。
 - **`internal/quota` / `internal/claim` / `internal/captcha`**：仍是占位实现（对应分支 501），
   见 A5-3 与 A6。
+
+## 附：仍待补采的未覆盖分支（A2 / A4）
+
+> 这两组是 **A2 / A4** 留下的空档，与上一节的 A5 无关 —— 列出它们是因为**同一条「不凭猜测
+> 补全」的纪律**适用于全部阶段。
 
 ### A4 未覆盖的分支（当时账号池为空）
 
