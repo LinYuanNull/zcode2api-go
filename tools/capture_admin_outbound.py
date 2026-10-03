@@ -471,8 +471,9 @@ def main():
         except Exception:  # noqa
             pass
         if flow_id:
-            # **必须按上游声明的 `poll_interval_sec`（本样本为 2s）节流**：实测 0.5s 间隔连打，
-            # 第 2 次出站会被上游限流成 429（ESA 层），采到的是限流样本而不是规范路径。
+            # 管理侧 poll **逐次都打上游**（`poll_interval_sec` 不是门控，见 observations.md 3.5）。
+            # 但 0.4s 级快打会**间歇性**触发上游限流（429）⇒ 采到的就不是规范路径了。
+            # 2.2s 间隔实测稳定拿到 3×`200 + pending`，故用它换取**确定性样本**。
             for i in range(3):
                 st, d = note_admin("login/poll#%d" % (i + 1),
                                   *req("GET", base + "/admin/api/login/poll/%s" % flow_id, None, ah))

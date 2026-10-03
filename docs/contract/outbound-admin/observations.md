@@ -92,16 +92,29 @@ User-Agent: python-httpx/0.28.1
 > 我方 Go 实现必须复刻这个**变换**（`expires_in` 固定 300、丢掉 `poll_token`/`logid`），
 > 而不是把上游 `data` 整体返回。
 
-### 3.5 `oauth/cli/poll/<flow_id>` 与节流
+### 3.5 `oauth/cli/poll/<flow_id>` 与「逐次出站」
 
 - 请求：`GET .../oauth/cli/poll/<flow_id>`，请求头与 3.1 同（同一 Bearer）。
 - 响应：`{"code":0,"msg":"","data":{"status":"pending"},"logid":"<hex>"}`。
 - 实测 `data.status` 至少见 **`pending`**（另有 `ready` / `failed` / `expired` 属未覆盖，见第九节）。
-- **必须按 `poll_interval_sec`（本样本 2s）节流**：实测 0.5s 间隔连打，
-  第 2 次出站会被上游 ESA 层限流成 **HTTP 429**。采样器已改为 2.2s 间隔，
-  现在 3 次 poll 全部稳定拿到 `200 + pending`。
-- **未知 / 过期 flow 不出站**：`GET /admin/api/login/poll/unknown-flow` 管理侧直接回
+- **没有本地时间门控**：管理侧**每次** `login/poll` 都**逐次**打一次上游 poll ——
+  实测 1.0s 间隔连打 6 次 → **6 次出站**、全部 `200`；2.2s 间隔同样 **6/6**。
+  `poll_interval_sec`（本样本 2）**不是**出站门控：它随 `login/start` 一起被丢弃。
+- **上游偶发 429（非确定性）**：0.4s 间隔快打会**间歇性**触发上游限流 ——
+  实测一次拿到 `[200,200,200,429]`，**同参数另一次却是 6 个 `200`**。
+- **出站失败后回退缓存**：一旦某次 poll 出站失败（如上例的 429），
+  **其后该 flow 的 poll 不再打上游**，管理侧仍返 `pending`
+  （实测 6 次 0.4s 间隔里第 5/6 次**零出站**）。
+- **未知 flow 不出站**：`GET /admin/api/login/poll/unknown-flow` 管理侧直接回
   `{"status":"expired"}`，MITM 侧**零出站** ⇒ 这是网关**本地**状态机给出的结论。
+
+### 3.6 管理侧 `flow_id` **就是**上游 `flow_id`（实测）
+
+同一 flow 三个值 **SHA-256 全等**：`login/start` 返回的 `flow_id` == 上游 init 响应的
+`data.flow_id` == 上游 poll 请求路径里的 id（**32 位 hex**）。
+
+> 即：管理侧**沿用**上游的 `flow_id`，**不是**本地另生成再映射。
+> 给实现：`login/poll/<id>` 的 `id` 必须能直接用作上游 poll 的路径参数。
 
 ## 四、额度查询（`zcode-plan/*`）
 
@@ -138,7 +151,13 @@ X-Request-Id, X-Title: Z Code@electron, X-Zcode-App-Version: 3.14.4
 - 指纹取值落在 `../store/fingerprint-shape.json` 的取值池里（`language` / `timezone` /
   `platform` / `arch` / `os_version` / `screen`），**每个安装随机**（本样本是
   `de-DE` / `Europe/Berlin` / `darwin` / `arm64` / `23.6.0`）。
-- `X-Title` 值必须逐字是 `Z Code@electron`（含 `@`）。
+- **平台映射（12 次抽样实测，8 种组合）**：
+  - `X-Os-Category` = `macos`（`platform=darwin`）/ **`windows`**（`platform=win32`）；
+  - `X-Platform` = `<platform>-<arch>`（`darwin-arm64` / `darwin-x64` / `win32-x64`）；
+  - `X-Os-Version` 与 `platform` 严格同域（darwin → `2x.y.z`、win32 → `10.0.2xxxx`），
+    与 `../store/fingerprint-shape.json` 的池一致 —— **不存在交叉**。
+- `X-Title` 值必须逐字是 `Z Code@electron`（含 `@`）；`X-Release-Channel` 实测恒为 `stable`。
+- `Content-Type: application/json` 出现在 **GET** 请求上 —— 实测如此（照发，别「优化」掉）。
 
 ### 4.3 响应码（凭据无效时）
 
