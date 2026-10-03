@@ -11,7 +11,13 @@ A4 的验收判据是「**同一请求序列下与 Python 行为逐项一致**�
 
   1. **入站响应**：状态码 + 响应体（JSON 按语义比较，SSE 按逐帧文本比较）；
   2. **出站请求**：方法 + 路径 + 请求体（这是「转发是否保真」的判据）；
-  3. **路由日志记号**：靶机自己打的 `>>>` / `[~]` / `<!>` 行（失败分类与切换顺序）。
+  3. **路由日志记号**：靶机自己打的 `>>>` / `[~]` / `<!>` 行（失败分类与切换顺序）；
+  4. **入站响应头（白名单）**：`content-type` / `cache-control` / `x-custom-probe`
+     —— 前三项之外的响应头（`date` / `server` / `transfer-encoding`）是服务器实现细节，不比较。
+
+记号比较（`--no-compare-marks` 可关）：先把 `<reqid>`（16 位 hex）与 UUID 掩码成
+`<reqid>` / `<uuid>`，再**丢掉 `install` 行**（安装序是并发后台任务，出现位置随时序浮动），
+最后逐行比较剩下的序列 —— 这样才能真正校验「失败分类文案 + 切换顺序」。
 
 用法
 ----
@@ -74,6 +80,32 @@ ADMIN_KEY = "a4-harness-admin"
 # 靶机日志带 ANSI 色码（非 TTY 下也带），匹配记号行前先剥掉。
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 MARKS = (">>>", "[+]", "[~]", "[!]", "<!>")
+
+# 比较入站响应头时的白名单 —— 其余（date / server / transfer-encoding / content-length）
+# 是服务器实现细节（uvicorn 用 chunked，Go 的 net/http 可能给 Content-Length），不属契约。
+HDR_WHITELIST = ("content-type", "cache-control", "x-custom-probe")
+
+# 记号行里的易变字段：`<reqid>`（16 位小写 hex）与安装序的 UUID。
+REQID_RE = re.compile(r"\b[0-9a-f]{16}\b")
+UUID_RE = re.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b")
+
+
+def norm_marks(marks):
+    """把记号行归一化成可逐行比较的序列。
+
+    做两件事：
+      - 掩码易变字段（`<reqid>` / `<uuid>`）；
+      - **丢掉 `install` 行** —— 安装序是**并发后台任务**（见 behavior.md 第四节），
+        它插在哪两条 `[~]` 之间纯看时序，拿它做逐行比较必然假失败。
+    """
+    out = []
+    for m in marks:
+        if " install " in m:
+            continue
+        s = UUID_RE.sub("<uuid>", m)
+        s = REQID_RE.sub("<reqid>", s)
+        out.append(s)
+    return out
 
 # 假上游里「与场景无关」的两条基础规则：账号安装序要用。
 BASE_RULES = [
@@ -143,8 +175,46 @@ SCENARIOS = {
         "steps": [("POST", "/v1/chat/completions", REQ_CHAT_STREAM)],
     },
     "sse-to-nonstream": {
-        "note": "非流式请求收到 SSE 体 → 期望 502 upstream_error（已实测）",
+        "note": "**已更正**：/v1/messages + 入站无 stream + 上游 SSE → 200 **原样透传 SSE**（不是 502）",
         "rules": [rule_messages(status=200, chunks_raw=ANTHROPIC_SSE)],
+        "steps": [("POST", "/v1/messages", REQ_MESSAGES)],
+    },
+    "chat-sse-on-nonstream": {
+        "note": "chat/completions + 入站 stream 为**假值** + 上游 SSE → 502 upstream_error（502 只在这里）",
+        "rules": [rule_messages(status=200, chunks_raw=ANTHROPIC_SSE)],
+        "steps": [("POST", "/v1/chat/completions", REQ_CHAT)],
+    },
+    "chat-stream-from-json": {
+        "note": "chat/completions + stream:true + 上游 **JSON** → 也会被转成 OpenAI SSE",
+        "rules": [rule_messages(status=200, body=ANTHROPIC_OK)],
+        "steps": [("POST", "/v1/chat/completions", REQ_CHAT_STREAM)],
+    },
+    "stream-string-false": {
+        "note": "stream 用 **Python 真值**：\"false\" 也是真值 ⇒ 走流式（>>> 印 stream、chat 走 SSE 转换）",
+        "rules": [rule_messages(status=200, chunks_raw=ANTHROPIC_SSE)],
+        "steps": [("POST", "/v1/chat/completions", dict(REQ_CHAT, stream="false"))],
+    },
+    "route-preview-multiturn": {
+        "note": ">>> 第 4 字段取**最后一条 user** 消息的文本（multiturn 印 again），且不影响出站",
+        "rules": [rule_messages(status=200, body=ANTHROPIC_OK)],
+        "steps": [("POST", "/v1/messages", {
+            "model": "GLM-5.3", "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"},
+                         {"role": "assistant", "content": "yo"},
+                         {"role": "user", "content": "again"}]})],
+    },
+    "model-unknown": {
+        "note": "目录外模型照常转发，model 原样写进出站体（不做模型名校验）",
+        "rules": [rule_messages(status=200, body=ANTHROPIC_OK)],
+        "steps": [("POST", "/v1/messages", {
+            "model": "no-such-model-xyz", "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]})],
+    },
+    "ct-passthrough": {
+        "note": "入站 Content-Type 照搬上游（text/* 追加 charset）；上游自定义头不透传；总是加 cache-control: no-cache",
+        "rules": [rule_messages(status=200, body=ANTHROPIC_OK,
+                                headers={"Content-Type": "text/x-probe",
+                                         "X-Custom-Probe": "abc"})],
         "steps": [("POST", "/v1/messages", REQ_MESSAGES)],
     },
     # ---- 上游错误：分类与冷却 ----
@@ -519,6 +589,8 @@ def run_scenario(kind, sc, work, py_dir, go_exe, keep, timeout=60):
                 "req": {"method": method, "path": path, "body": body},
                 "status": st,
                 "ctype": ctype,
+                # 响应头按**小写键**存全量，比较时只取白名单（见 HDR_WHITELIST）。
+                "headers": {k.lower(): v for k, v in (hdr or {}).items()},
                 "body": norm_body(raw, ctype),
                 # raw_text 用于**逐字节**判「转发保真」（键顺序也是契约）。
                 "raw_text": raw.decode("utf-8", "replace"),
@@ -543,6 +615,8 @@ def show(res):
     for i, s in enumerate(res["steps"]):
         print("  [%d] %s %s -> %s  (ctype=%r, %dB)" % (
             i, s["req"]["method"], s["req"]["path"], s["status"], s["ctype"], s["raw_len"]))
+        wh = {k: hget(s.get("headers") or {}, k) for k in HDR_WHITELIST}
+        print("      响应头（白名单）:", json.dumps(wh, ensure_ascii=False))
         print("      响应原文:", json.dumps(s["raw_text"][:600], ensure_ascii=False))
         if s["outbound"]:
             for o in s["outbound"]:
@@ -556,7 +630,7 @@ def show(res):
             print("      ", m[:150])
 
 
-def diff(a, b):
+def diff(a, b, compare_marks=True):
     """逐项对比两次运行，返回差异行。"""
     def sem(outs):
         return [{k: v for k, v in o.items() if k != "raw_body"} for o in outs]
@@ -569,6 +643,11 @@ def diff(a, b):
             out.append("[%d] 状态码 %s vs %s" % (i, x["status"], y["status"]))
         if x["ctype"] != y["ctype"]:
             out.append("[%d] Content-Type %r vs %r" % (i, x["ctype"], y["ctype"]))
+        for name in HDR_WHITELIST:
+            hx = hget(x.get("headers") or {}, name)
+            hy = hget(y.get("headers") or {}, name)
+            if hx != hy:
+                out.append("[%d] 响应头 %s: %r vs %r" % (i, name, hx, hy))
         if x["body"] != y["body"]:
             out.append("[%d] 响应体（语义）不同\n      py: %s\n      go: %s" % (
                 i, json.dumps(x["body"], ensure_ascii=False)[:400],
@@ -588,6 +667,14 @@ def diff(a, b):
                        "      py: %s\n      go: %s" % (
                            i, json.dumps(x["raw_text"][:300], ensure_ascii=False),
                            json.dumps(y["raw_text"][:300], ensure_ascii=False)))
+    if compare_marks:
+        mx = norm_marks(a.get("marks") or [])
+        my = norm_marks(b.get("marks") or [])
+        if mx != my:
+            out.append("路由记号序列不同（已掩码 <reqid>/<uuid>、已丢 install 行）\n"
+                       "      py: %s\n      go: %s" % (
+                           json.dumps(mx, ensure_ascii=False)[:600],
+                           json.dumps(my, ensure_ascii=False)[:600]))
     return out
 
 
@@ -602,6 +689,8 @@ def main():
     ap.add_argument("--keep", action="store_true", help="保留工作目录（含假上游日志）")
     ap.add_argument("--timeout", type=int, default=90,
                     help="单个入站请求的等待秒数（429/500 场景会退避重试，需放宽）")
+    ap.add_argument("--no-compare-marks", action="store_true",
+                    help="不比较路由记号序列（默认比较：掩码 <reqid>/<uuid>、丢掉 install 行）")
     a = ap.parse_args()
 
     if a.list:
@@ -634,7 +723,7 @@ def main():
         if a.go_exe:
             rgo = run_scenario("go", sc, a.work, a.py_dir, a.go_exe, a.keep, a.timeout)
             show(rgo)
-            d = diff(rpy, rgo)
+            d = diff(rpy, rgo, compare_marks=not a.no_compare_marks)
             if d:
                 bad += 1
                 print("  >>> 差异 %d 项：" % len(d))

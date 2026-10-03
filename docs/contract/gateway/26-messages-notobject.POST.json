@@ -1,0 +1,31 @@
+{
+  "_about": "网关域：`/v1/messages` 请求体是**合法 JSON 但不是对象**时的分支。",
+  "_captured": "2026-10-04",
+  "_method": "本地假上游（tools/mitmupstream）+ 靶机；`json.Valid` 通过但根不是对象。",
+  "route": "/v1/messages",
+  "method": "POST",
+  "request": {
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body_raw": "123"
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "error": {
+        "message": "请求体必须是 JSON 对象",
+        "type": "invalid_request_error"
+      }
+    }
+  },
+  "notes": [
+    "根是 `123` / `null` / `[]` 时**都**走这条：400 + `请求体必须是 JSON 对象`。",
+    "**注意 type 与「非法 JSON」那条不同**：非法 JSON 是 `invalid_request`（见 24-messages-badjson.POST.json），本分支是 `invalid_request_error` —— 与 `/v1/chat/completions` 的非法 JSON 同型。",
+    "两种入口（`/v1/messages` 与 `/v1/chat/completions`）在本分支上**文案与 type 完全一致**（实测）。",
+    "**不发生任何出站**：这条检查在调度之前。"
+  ]
+}

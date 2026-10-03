@@ -1,0 +1,42 @@
+{
+  "_about": "出站 body **序列化形态**的探针证据（observations.md #40–#46 的判据来源）。",
+  "_captured": "2026-10-04",
+  "_method": "本地 MITM 假上游；用「紧凑 + 非规范」的入站体反问参考实现，读它写回的出站原文。探针：D:/tmp/probe_body.py（一次性定向实验，非发布工具）。",
+  "_why": "入站体一律用 capture_outbound.py 的 json.dumps 生成（本身就是带空格的），所以只看那份采样**分不清**出站是「保原样」还是「重新 dumps」。这里故意用紧凑/乱序/特殊数字与转义的入站体把两者分开。",
+  "route": "POST https://api.z.ai/api/anthropic/v1/messages",
+  "probes": [
+    {
+      "id": "compact-oddorder",
+      "shows": ["#40 带空格分隔符", "#41 ensure_ascii=False", "#44 数字经 Python 类型往返", "#46 键序保留"],
+      "inbound": "{\"messages\":[{\"content\":\"hi\",\"role\":\"user\"}],\"model\":\"GLM-5.3\",\"max_tokens\":16,\"metadata\":{\"a\":1e3,\"b\":1.0,\"c\":100,\"d\":\"中文\"}}",
+      "outbound": "{\"messages\": [{\"content\": [{\"type\": \"text\", \"text\": \"hi\"}], \"role\": \"user\"}], \"model\": \"GLM-5.3\", \"max_tokens\": 16, \"metadata\": {\"a\": 1000.0, \"b\": 1.0, \"c\": 100, \"d\": \"中文\"}}"
+    },
+    {
+      "id": "array-whitespace",
+      "shows": ["#45 整棵子树被重新序列化", "#40"],
+      "inbound": "{\"model\":\"GLM-5.3\",\"messages\":[{\"role\":\"user\",\"content\":[ { \"type\" : \"text\" , \"text\" : \"hi\" } ]}],\"max_tokens\":1}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}], \"max_tokens\": 1}"
+    },
+    {
+      "id": "toplevel-pretty",
+      "shows": ["#45 顶层空白被压掉", "#46"],
+      "inbound": "{\n  \"model\" : \"GLM-5.3\",\n  \"max_tokens\" : 2,\n  \"messages\" : [ {\"role\":\"user\",\"content\":\"hi\"} ]\n}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 2, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
+    },
+    {
+      "id": "html-escape",
+      "shows": ["#42 字符串解码再重编（\\u0041 → A）", "#43 < > & 不转义"],
+      "inbound": "{\"model\":\"GLM-5.3\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"a<b>&c \\u0041\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 1, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"a<b>&c A\"}]}]}"
+    }
+  ],
+  "python_reference_rules": {
+    "_about": "参考实现等于 Python `json.loads` + `json.dumps(ensure_ascii=False)`。下列取值用 CPython 复算确认（Go 侧实现须逐条对齐）。",
+    "整数": "任意精度，原样输出数字；`-0` → `0`（int 归一）",
+    "浮点": "最短往返 repr；整数值补 `.0`；十进制指数 `decpt <= -4 || decpt > 16` 时用指数形（`1e+30` / `5e-324`，指数至少两位、带符号）",
+    "字符串": "解码转义后重编：`\"`→`\\\"`、`\\`→`\\\\`、控制字符 `\\b \\f \\n \\r \\t` 与 `\\u00XX`；`< > &`、非 ASCII、U+2028 一律**原样**",
+    "容器": "`{}` / `[]`；分隔符 `\", \"` / `\": \"`",
+    "重复键": "取**最后**的值、保留**首次**出现的位置",
+    "非有限数": "`NaN` / `Infinity` / `-Infinity`（裸记号）"
+  }
+}

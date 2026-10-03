@@ -12,26 +12,42 @@
 | 入口 | 出站 body | 入站响应 |
 |---|---|---|
 | `POST /v1/messages` | **保序改写**：只把 `messages[].content` 的字符串包装成 `[{type:text,text:…}]`，其余字段原样 | **上游响应逐字节透传**（状态码 + body + `Content-Type` 都照搬） |
-| `POST /v1/chat/completions` | **重建**：键序固定 `model, messages, max_tokens`（+ `stream` 若入站有） | **必须解析**：转成 OpenAI 形状（JSON）或 OpenAI SSE；解析失败 → 502 |
+| `POST /v1/chat/completions` | **重建**：键序固定 `model, messages, max_tokens`（+ `stream` 追加在末尾） | **必须解析**：转成 OpenAI 形状（JSON）或 OpenAI SSE；解析失败 → 502 |
 
-**`/v1/messages` 不解析响应**，所以上游给什么就回什么：
+**`/v1/messages` 不解析响应**，所以上游给什么就回什么。而且**与入站的 `stream` 字段完全无关**
+（探针 `m-absent__sse` / `m-false__sse`：入站没有 / 显式 `stream:false`，上游给 SSE 照样原样回 SSE）：
 
 | 上游响应 | 入站 |
 |---|---|
 | 200 + JSON | 200 + **同样的字节**，`Content-Type: application/json` |
-| 200 + SSE（非流式请求） | 200 + **同样的字节**，`Content-Type: text/event-stream; charset=utf-8` |
+| 200 + SSE（无论入站 `stream` 是什么） | 200 + **同样的字节**，`Content-Type: text/event-stream; charset=utf-8` |
 | 200 + 非 JSON 文本（`not json at all`） | 200 + `not json at all` |
 | 200 + 错误体 `{"error":…}` | 200 + 同样的字节 |
 | 400 | 400 + 上游错误体逐字透传 |
 
-**`/v1/chat/completions` 必须解析**：
+**响应头规则（实测，探针 `h-*`）**：
+
+| 项 | 行为 |
+|---|---|
+| `Content-Type` | **照搬上游**（上游 `text/plain` → 入站 `text/plain; charset=utf-8`；上游 `text/x-probe` → 入站 `text/x-probe; charset=utf-8`）。`text/*` 追加 `; charset=utf-8` 是 uvicorn/Starlette 的行为。 |
+| 其它上游响应头 | **一律不透传**（探针给上游加了 `X-Custom-Probe: abc`，入站没有它）。 |
+| `cache-control: no-cache` | **总是**加上。 |
+| `server` / `date` / `transfer-encoding` | uvicorn 自己加的，不是实现的行为。 |
+
+**`/v1/chat/completions` 必须解析**（`stream` 用**真值**判定，见 §3.0 末）：
 
 | 上游响应 | 入站 |
 |---|---|
 | 200 + Anthropic JSON | 200 + 转换后的 OpenAI JSON |
-| 200 + SSE | 200 + 转换后的 OpenAI SSE |
-| 200 + SSE（但入站**非**流式） | **502** `{"error":{"message":"上游响应格式异常","type":"upstream_error"}}` |
-| 200 + 非 JSON 文本 | 同上 502 |
+| 200 + SSE（入站 `stream` 为真值） | 200 + 转换后的 OpenAI SSE |
+| 200 + JSON（入站 `stream` 为真值） | 200 + **转换后的 OpenAI SSE**（探针 `c-true__json`） |
+| 200 + SSE（入站 `stream` 为**假值**） | **502** `{"error":{"message":"上游响应格式异常","type":"upstream_error"}}` |
+| 200 + 非 JSON 文本（入站 `stream` 为假值） | 同上 502 |
+
+> ⚠️ **修正**：此前本表把「200 + SSE（入站非流式）→ 502」挂在 `/v1/messages` 上，**是错的**。
+> 探针 `m-absent__sse`（`/v1/messages` + 无 `stream` + 上游 SSE）实测是 **200 原样透传 SSE**。
+> 502 只发生在 **`/v1/chat/completions`** 且入站 `stream` 为假值时。
+> `tools/behavior_diff.py` 的 `sse-to-nonstream` 场景已按此改名/改路径（见该文件）。
 
 ## 二、响应形状（逐字节）
 
@@ -67,34 +83,109 @@ data: {"id": "<上游 msg id>", …, "choices": [{"index": 0, "delta": {}, "fini
 
 ## 三、上游错误分类与状态机（**全部实测**）
 
+### 3.0 `>>>` 是**请求进入路由时**打的，不是成功标记
+
+```
+>>> <reqid>  <model>  sync|stream  "<preview>"
+```
+
+- **每次请求都有一条**，与最终结果无关。实测：11 次请求 → 11 条 `>>>`，
+  其中 10 次以 `503` 结束（池已被第一个请求抽干）。
+- `<reqid>` = **16 位小写 hex**；同一个请求的所有日志行共用它。
+
+后三个字段的取值规则**全部由探针钉死**（逐条证据见 `fixtures/route-log-probes.json`）：
+
+| 字段 | 规则 | 最容易记错的地方 |
+|---|---|---|
+| `<model>` | `body.get("model") or "-"`：缺键 / `null` / **空串**都印 `-`；**不做模型名校验**，目录外模型原样回显 | 空串印 `-`（是真值判定，不是「有键就印」） |
+| `sync\|stream` | 值的 **Python 真值**（`if body.get("stream")`） | **不是 `is True`**：`"false"` / `"0"` / `1` / `[0]` 都印 `stream`；`0` / `""` / `[]` / `{}` / `null` 都印 `sync` |
+| `"<preview>"` | **最后一条 `role == "user"`** 消息的首段文本 | **不是首条消息**（m-multiturn 印的是末条 user 的 `again`）；role 比较**大小写敏感** |
+
+`<preview>` 的细节（`[{user …}]` 逐个走）：
+
+| `content` 形态 | 结果 |
+|---|---|
+| 字符串（**含空串**） | 取它 —— **空串也覆盖** |
+| 数组 | 取第一个 `type == "text"` 块的 `text`；块里缺 `text` 键 ⇒ 取空串并覆盖；找不到 text 块 ⇒ **不覆盖** |
+| 数字 / `null` / 对象 / 缺 `content` 键 | **不覆盖** |
+
+所以 `[{user "A"}, {user ""}]` → `""`（被覆盖），而 `[{user []}, {user "B"}]` → `"B"`（没覆盖）。
+「取不到就不覆盖」意味着预览值会**回落到更早的 user 消息**（`[{user "OLD"}, {user}]` → `"OLD"`）。
+
+> 这条规则是在写 A4 时**由实测纠正**的：此前文档写「首条用户文本」，与 m-multiturn 的 `again` 不符。
+
+### 3.0.1 `stream` 的真值语义同时决定 `/v1/chat/completions` 的响应形状
+
+`/v1/messages` 的响应**完全不看** `stream`（上游给什么回什么）；
+`/v1/chat/completions` 用同一个**真值**判定选择 JSON 还是 OpenAI SSE 输出
+（探针 `c-strfalse__sse`：入站 `stream:"false"` 也走 SSE 转换）。见 §一 的表。
+
+### 3.1 分类表
+
 一次入站请求会**按顺序逐个账号尝试**，直到成功或池空。按上游响应分类：
 
 | 上游 | 分类 | 日志文案 | 重试 | 账号后续状态 |
 |---|---|---|---|---|
-| 2xx | 成功 | `>>> <reqid>  <model>  sync\|stream  "<首条文本>"` | — | 正常 |
-| **400** | **客户端错，直接透传** | `<!> 上游错误 HTTP 400（账号 X）` + `[~] 上游 400 完整响应体: <body>` | 不重试、**不切账号** | 不变 |
-| **401 / 403** | 鉴权失败 | `[~] 账号 X 鉴权失败 <code>，切换下一个` | 不重试 | **标 invalid** |
-| **429** | 被限流 | `[~] 账号 X 被限流 429，<N>s 后重试（k/5）` → `[~] 账号 X 429 重试 5 次耗尽，切换下一个（账号保持可用）` | **5 次**，间隔 = `Retry-After` 秒（实测 `7`→7s、`2`→2s） | **保持可用** |
-| **5xx** | 上游故障 | `[~] 账号 X 上游 HTTP 500，5s 后重试（k/3）` → `[~] 账号 X 上游 500 重试耗尽，冷却 300s，切换下一个` | **3 次**，间隔固定 **5s** | **冷却 300s** |
-| 传输层错误 | 连接失败 | `[~] 账号 X 连接失败，切换下一个` | 不重试 | 切换 |
+| **2xx** | 成功 | （无额外行；`>>>` 已在进入时打过） | — | 正常 |
+| **4xx（除下四类）**：`400` / `404` / `408` / `422` … | **客户端错，直接透传** | `<!> <reqid> 上游错误 HTTP <code>（账号 X）` + `[~] <reqid> 上游 <code> 完整响应体: <body>` | 不重试、**不切账号** | 不变 |
+| **401 / 403** | 鉴权失败 | `[~] <reqid> 账号 X 鉴权失败 <code>，切换下一个` | 不重试 | **标 invalid** |
+| **402** | 额度用完 | `[~] <reqid> 账号 X 额度用完，切换下一个` | 不重试 | 切下一个 |
+| **429** | 被限流 | `[~] <reqid> 账号 X 被限流 429，<N>s 后重试（k/5）` → `[~] <reqid> 账号 X 429 重试 5 次耗尽，切换下一个（账号保持可用）` | **重试 5 次**（连首次共出站 **6** 次），间隔 = `Retry-After` 秒；**缺该头时 60s** | **保持可用** |
+| **5xx** | 上游故障 | `[~] <reqid> 账号 X 上游 HTTP <code>，5s 后重试（k/3）` → `[~] <reqid> 账号 X 上游 <code> 重试耗尽，冷却 300s，切换下一个` | **重试 3 次**（连首次共出站 **4** 次），间隔**固定 5s** | **冷却 300s** |
+| 传输层错误 | 连接失败 | `[~] <reqid> 账号 X 连接失败，切换下一个` | 不重试 | 切换 |
 
-**全部账号都失败** → `<!> 无可用账号 / 额度均已耗尽 / 并发已满` →
+**全部账号都失败** → `<!> <reqid>  无可用账号 / 额度均已耗尽 / 并发已满` →
 入站 `503` + `{"error":{"message":"所有账号均不可用、额度已用完或并发已满，请在后台检查账号状态","type":"no_available_account"}}`。
 
-> 注意：**401 的错误体不会到客户端**。客户端看到的是「所有账号都失败」后的 503。
+### 3.2 这几行的依据（逐条实测，不猜）
+
+| 实测项 | 结果 | 依据 |
+|---|---|---|
+| `400` / `404` / `408` / `422` | **都走「客户端错」透传分支**（不只是 400） | 探针 `p-404` / `p-408` / `p-422`：入站原样回 `404/408/422` + 上游错误体，且**只出站 1 次**（不切账号） |
+| `402` | **独立分类**，文案 `额度用完，切换下一个` | 探针 `p-402`：`[~] … 账号 h-00 额度用完，切换下一个`，两账号各出站 1 次后 503 |
+| `429` 带 `Retry-After: 7` / `: 2` | 间隔 = 7s / 2s | `behavior_diff.py --scenario upstream-429` / `upstream-429-retryafter` |
+| `429` 的**次数** | 每个账号**出站 6 次**（1 首次 + 5 重试），日志 `（1/5）`…`（5/5）` | `behavior_diff.py --scenario upstream-429`：2 账号 × 6 = **12** 条出站记录 |
+| `5xx` 的**次数** | 每个账号**出站 4 次**（1 首次 + 3 重试），日志 `（1/3）`…`（3/3）` | `behavior_diff.py --scenario upstream-500`：2 账号 × 4 = **8** 条出站记录 |
+| `429` **不带** `Retry-After` | 间隔 **60s** | 探针 `p-429-noheader`：3 次间隔共 180s（实测总耗时 183.3s） |
+| `5xx` 带 `Retry-After: 1` | **仍按 5s**（不读该头） | 探针 `p-500-ra1`：3 次重试实测 18.5s（≈3×5s + 启动开销） |
+| `503` | 走 5xx 分支 | 探针 `p-503`：`上游 HTTP 503，5s 后重试（k/3）` → `冷却 300s` |
+| `/v1/messages` + 上游 SSE + 入站**无** `stream` | **200 原样透传 SSE**（**不是** 502） | `behavior_diff.py --scenario sse-to-nonstream`（同名场景，已确认路径是 `/v1/messages`） |
+
+> 3xx / 1xx 属**未覆盖**：分类链里没有它们的位置，Go 侧按「非 2xx 且未特别分类 ⇒ 走客户端错透传」
+> 处理并在此登记（不是猜测出的「默认值」，而是把未覆盖分支的选择写明）。
+
+> 注意：**401/403 的错误体不会到客户端**。客户端看到的是「所有账号都失败」后的 503。
 > `observations.md` #19 记的「上游错误体原样透传」指的是**上游那一侧的响应**，
-> 不是客户端拿到的入站响应 —— 只有 400（与成功）才会到客户端。
+> 不是客户端拿到的入站响应 —— 只有「客户端错」这一类（与成功）才会到客户端。
 
-## 四、账号「安装序」（eager）
+## 四、账号「安装序」（eager + 后台）
 
-每个账号在被使用前要跑一遍安装序，**在池内预先铺开**：
+安装序有**两级**，且都是**在账号加入时/进程启动时**发起，**不在转发请求的路径上**：
+
+| 级别 | 时机 | 日志 |
+|---|---|---|
+| 进程级 | 进程启动 | `[+] install 安装初始化完成（configs=√，events=app_launch,app_daily_active）` |
+| 账号级 | 账号加入池时（含启动时载入既有账号） | 成功 `[+] install 账号 X 安装序完成（install_id=<uuid>）`；降级 `[~] install 账号 X 安装序部分失败: <原因>` |
+
+每一步都是 1 次 + 2 次出站：
 
 1. `GET https://zcode.z.ai/api/v1/client/configs?app_version=3.14.4`（不带鉴权）
-2. `POST https://zcode.z.ai/api/v1/event/report` × 2（`app_launch`、`app_daily_active`，带账号指纹）
+2. `POST https://zcode.z.ai/api/v1/event/report` × 2（`element_name` = `app_launch`、`app_daily_active`，带账号指纹）
 
-- 成功：`[+] install 账号 X 安装序完成（install_id=<uuid>）`
-- 降级：`[~] install 账号 X 安装序部分失败: <原因>`（例如 `client/configs 失败: …`）
-- 进程启动时：`[+] install 安装初始化完成（configs=√，events=app_launch,app_daily_active）`
+**依据（一次 41 账号的全量采样）**：
+
+- 出站计数：`client/configs` **42** 条、`event/report` **84** 条、`api.z.ai/v1/messages` **41** 条。
+  42 = 41 个账号 + 1 次进程级；84 = 42 × 2 ⇒ **每个安装序恰好 1 configs + 2 events**。
+- 日志计数：`安装序完成` 33 + `安装序部分失败` 8 = **41**（= 账号数），`安装初始化完成` 1。
+- **顺序证据**：全部 41 条安装序日志出现在**首个转发请求之前或与之交错**，
+  且 `[+] install 账号 h-00 安装序完成` 出现在 `429 重试（1/5）` 与 `（2/5）` 之间 ——
+  即请求在 7s 退避里睡着时安装序才跑完 ⇒ **安装序是并发后台任务**，不阻塞转发。
+
+> **修正 `observations.md` #36**：那里记的「每次尝试前都会拉一次 `client/configs`」是
+> 把「账号级安装序」误当成了「每次转发前的探活」。计数（42 vs 41）与交错顺序都指向
+> **安装序按账号跑一次**，转发路径上**没有任何 configs 调用**。
+
+> 属 A5（`internal/install`）。A4 的转发路径**不调用** configs/event。
 
 ## 五、模型表：**编译期常量**（观察 #26 的待钉死项已钉死）
 
@@ -117,3 +208,32 @@ data: {"id": "<上游 msg id>", …, "choices": [{"index": 0, "delta": {}, "fini
 - 风控 `3012` / 验证码挑战的真实回执（属 A6）。
 - `content` 里 `tool_use` / `tool_result` / `image` 块的转换。
 - 并发槽（`account_concurrency`）耗尽时的排队行为。
+- **3xx / 1xx 上游状态码**：分类链里没有它们的位置。Go 侧按「非 2xx 且未特别分类
+  ⇒ 走客户端错透传」处理（见 3.2 末注），并把该选择登记在此，而不是当成已知默认值。
+- **`Retry-After` 不是整数**（如 HTTP-date 形态）时的行为。
+- **`/v1/chat/completions` 的入站字段映射**：`role: system` 怎么处理、`tools` / `temperature` /
+  `stop` 等 OpenAI 字段是否搬运、`max_tokens` 缺失时的默认值 —— **均未采样**
+  （清单见 `fixtures/chat-completions-requests.json` 的 `_gaps`）。
+- **上游没有 `Content-Type` 响应头时**的入站 `Content-Type`（假上游总会带一个，测不出）。
+
+## 六之二、**有意偏离**（参考实现是缺陷，本实现不照抄）
+
+以下两处参考实现的行为是**未处理异常**（入站 `500 text/plain Internal Server Error`、
+连 `>>>` 日志行都没打、**零出站**）。照抄一个崩溃不是「保真」，本实现改为**明确拒绝并说明原因**
+（`400` + `{"error":{"message":…,"type":"invalid_request_error"}}`），在此登记：
+
+| 入站体 | 参考实现 | 本实现（有意偏离） | 证据 |
+|---|---|---|---|
+| `model` 是**非字符串、非 `null`**（如 `123`） | 500 崩溃 | `400 model 必须是字符串`（`bodytransform.ErrModelNotString`） | 探针 `p-model-number` |
+| `messages[].content[]` 的 text 块里 `text` **不是字符串**（如 `123`） | 500 崩溃 | 该条预览取空串，**正常转发**（不崩） | 探针 `p-text-nonstring` |
+
+> 判据的取舍：这两处的「参考行为」不构成任何可依赖的契约（客户端只会拿到 500 与
+> 一个空白页面），而项目铁律是「未实现的协议一律明确报错并附原因，绝不回落到近似协议试一下」。
+> 因此选择拒绝/降级，而不是复刻崩溃。**除此之外**的转发行为一律逐项对齐。
+
+> **本轮已由实测补齐、不再是未覆盖**：`>>>` 行第 3 字段在 `stream:true` 时印 `stream`
+> （`ok-stream` / `ok-openai-stream` 两个场景的日志）；非对象根 → 400
+> `请求体必须是 JSON 对象`（两个入口一致，样本 `gateway/26-messages-notobject.POST.json`）；
+> `messages` 缺失 / 不是数组、`content` 是数字 / `null` 时**原样转发不改写**（形状探针）；
+> `>>>` 行第 4 字段是**最后一条 `role=="user"`** 的首段文本（§3.0，此前记成「首条」是错的）；
+> `/v1/messages` 的响应头只搬上游 `Content-Type`（§一，探针 `h-*`）。

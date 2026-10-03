@@ -1,0 +1,292 @@
+{
+  "_about": "路由日志 `>>>` 行与 `/v1/messages` 响应头的**探针证据**，同时作为 `internal/bodytransform` 的测试数据源（behavior.md §3.0 与 §一的判据来源）。",
+  "_captured": "2026-10-04",
+  "_method": "tools/behavior_diff.py 的假上游 + Python 靶机；一次性探针脚本 D:/tmp/probe_marks{,2,3,4}.py（定向实验，不进仓库）。",
+  "_why": "`>>>` 第 4 字段此前被记成「首条用户文本」，但全量采样的 m-multiturn 场景（messages = [user hi, assistant yo, user again]）印出的是 `again` —— 与首条不符。本文件用构造把「首条 / 末条 / 末条 user / 首个可提取文本」四者分开。",
+  "_schema": "field_probes[].request 是**逐字节**的入站体（测试直接喂给 bodytransform.Inspect）；expect 是 Go 侧应有的取值；observed_line 是 Python 靶机实际打出的那一行。`expect.error` 为 `not_object` / `model_not_string` 时表示应返回对应错误。",
+  "route_log_line": ">>> <reqid>  <model>  sync|stream  \"<preview>\"",
+  "field_probes": [
+    {
+      "id": "p-first-vs-last",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"FIRST\"}, {\"role\": \"assistant\", \"content\": \"MID\"}, {\"role\": \"user\", \"content\": \"LASTUSER\"}, {\"role\": \"assistant\", \"content\": \"LASTASSIST\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": "LASTUSER"},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"LASTUSER\"",
+      "note": "preview 取**最后一条 role==\"user\"** 的消息；末尾的 assistant 消息不参与。"
+    },
+    {
+      "id": "p-single-assistant",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"assistant\", \"content\": \"ONLY-ASSIST\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "没有 role==\"user\" 的消息 ⇒ 空串。"
+    },
+    {
+      "id": "p-array-first-text-block",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"BLOCK-A\"}, {\"type\": \"text\", \"text\": \"BLOCK-B\"}]}, {\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"LAST-BLOCK-A\"}, {\"type\": \"text\", \"text\": \"LAST-BLOCK-B\"}]}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": "LAST-BLOCK-A"},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"LAST-BLOCK-A\"",
+      "note": "content 是数组时取**该条**里第一个 `type==\"text\"` 块的 text（不是拼接、也不是最后一块）。"
+    },
+    {
+      "id": "p-array-skips-nontext-block",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"tool_result\", \"content\": \"zzz\"}, {\"type\": \"text\", \"text\": \"SECOND-TEXT\"}]}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": "SECOND-TEXT"},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"SECOND-TEXT\"",
+      "note": "数组里非 text 的块被跳过，继续找下一个 text 块。"
+    },
+    {
+      "id": "p-missing-content-falls-back",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"OLD\"}, {\"role\": \"user\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": "OLD"},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"OLD\"",
+      "note": "末条 user 取不出文本时**不覆盖**已有值 ⇒ 回落到更早的 user 消息。"
+    },
+    {
+      "id": "p-empty-string-overwrites",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"A\"}, {\"role\": \"user\", \"content\": \"\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "content 是**空字符串**时**会**覆盖 ⇒ 判据是「content 是不是字符串」，不是「文本是否非空」。"
+    },
+    {
+      "id": "p-empty-array-does-not-overwrite",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": []}, {\"role\": \"user\", \"content\": \"B\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": "B"},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"B\"",
+      "note": "空数组里找不到 text 块 ⇒ 不覆盖。（与上一条的差别：字符串形态总能取到值，数组形态要找到 text 块才取值。）"
+    },
+    {
+      "id": "p-textblock-without-text-key",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"C\"}, {\"role\": \"user\", \"content\": [{\"type\": \"text\"}]}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "找到了 text 块但块里没有 text 键 ⇒ 取成空串并**覆盖**。"
+    },
+    {
+      "id": "p-text-empty-string",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"E\"}, {\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"\"}]}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "text 是空串 ⇒ 覆盖成空串。"
+    },
+    {
+      "id": "p-text-nonstring",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"D\"}, {\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": 123}]}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": "（无该行）—— 参考实现直接 500 `text/plain` `Internal Server Error`，零出站",
+      "note": "text 块的值不是字符串 ⇒ 参考实现**未处理异常**。本实现**有意偏离**：取空串、不崩（behavior.md §六）。"
+    },
+    {
+      "id": "p-role-case-sensitive",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"OLD\"}, {\"role\": \"USER\", \"content\": \"CAPS\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": "OLD"},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"OLD\"",
+      "note": "role 比较是**大小写敏感**的（\"USER\" 不算 user）。"
+    },
+    {
+      "id": "p-no-role-field",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"content\": \"NO-ROLE\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "缺 role 键 ⇒ 不参与。"
+    },
+    {
+      "id": "p-messages-not-array",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": {\"role\": \"user\", \"content\": \"OBJ\"}}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "messages 不是数组 ⇒ 空串（且**不影响转发**：出站照常 1 次）。"
+    },
+    {
+      "id": "p-messages-item-not-object",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [\"plain\"]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "元素不是对象 ⇒ 跳过。"
+    },
+    {
+      "id": "p-no-messages",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "请求体没有 messages 键 ⇒ 空串。"
+    },
+    {
+      "id": "p-content-null",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": null}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "preview": ""},
+      "observed_line": ">>> <reqid>  GLM-5.3  sync  \"\"",
+      "note": "content 为 null ⇒ 取不出、不覆盖（此处只有一条，故空串）。"
+    },
+    {
+      "id": "p-model-missing",
+      "request": "{\"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "", "model_label": "-", "stream": false, "preview": "hi"},
+      "observed_line": ">>> <reqid>  -  sync  \"hi\"",
+      "note": "缺 model ⇒ 印 `-`。"
+    },
+    {
+      "id": "p-model-null",
+      "request": "{\"model\": null, \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "", "model_label": "-", "stream": false, "preview": "hi"},
+      "observed_line": ">>> <reqid>  -  sync  \"hi\"",
+      "note": "model 为 null ⇒ 印 `-`。"
+    },
+    {
+      "id": "p-model-empty-string",
+      "request": "{\"model\": \"\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "", "model_label": "-", "stream": false, "preview": "hi"},
+      "observed_line": ">>> <reqid>  -  sync  \"hi\"",
+      "note": "空串 ⇒ 印 `-` ⇒ 判据是**真值**（`model or \"-\"`）。"
+    },
+    {
+      "id": "p-model-unknown-passthrough",
+      "request": "{\"model\": \"no-such-model-xyz\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "no-such-model-xyz", "stream": false, "preview": "hi"},
+      "observed_line": ">>> <reqid>  no-such-model-xyz  sync  \"hi\"",
+      "note": "**不做模型名校验**，原样回显（且照常出站）。"
+    },
+    {
+      "id": "p-model-number",
+      "request": "{\"model\": 123, \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"error": "model_not_string"},
+      "observed_line": "（无该行）—— 参考实现直接 500 `text/plain` `Internal Server Error`，零出站",
+      "note": "model 是数字 ⇒ 参考实现在**打日志之前**就崩了（推测是对 model 做了字符串操作）。本实现**有意偏离**：返回 ErrModelNotString（behavior.md §六）。"
+    },
+    {
+      "id": "p-stream-true",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": true, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": true, "stream_label": "stream", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-false",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": false, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "stream_label": "sync", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-absent",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "stream_label": "sync", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-null",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": null, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "stream_label": "sync", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-zero",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": 0, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "stream_label": "sync", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-emptystr",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": \"\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "stream_label": "sync", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-emptylist",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": [], \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "stream_label": "sync", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-emptyobj",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": {}, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": false, "stream_label": "sync", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-one",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": 1, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": true, "stream_label": "stream", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-nonempty-list",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": [0], \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": true, "stream_label": "stream", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-str-true",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": \"true\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": true, "stream_label": "stream", "preview": "hi"}
+    },
+    {
+      "id": "p-stream-str-false",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": \"false\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": true, "stream_label": "stream", "preview": "hi"},
+      "note": "**非空字符串 ⇒ 真值 ⇒ 印 `stream`**。这条最能说明「真值判定」而非 `is True`。"
+    },
+    {
+      "id": "p-stream-str-zero",
+      "request": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": \"0\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "expect": {"model": "GLM-5.3", "stream": true, "stream_label": "stream", "preview": "hi"}
+    },
+    {
+      "id": "p-root-not-object-array",
+      "request": "[1, 2]",
+      "expect": {"error": "not_object"}
+    },
+    {
+      "id": "p-root-not-object-string",
+      "request": "\"x\"",
+      "expect": {"error": "not_object"}
+    },
+    {
+      "id": "p-root-not-object-number",
+      "request": "123",
+      "expect": {"error": "not_object"}
+    },
+    {
+      "id": "p-root-not-object-null",
+      "request": "null",
+      "expect": {"error": "not_object"}
+    },
+    {
+      "id": "p-root-not-object-bool",
+      "request": "true",
+      "expect": {"error": "not_object"}
+    },
+    {
+      "id": "p-invalid-json",
+      "request": "{",
+      "expect": {"error": "parse"}
+    }
+  ],
+  "stream_truthiness_affects_response_path": [
+    {"id": "m-true__json", "endpoint": "/v1/messages", "stream": true, "upstream": "JSON", "observed": "200 application/json（照搬上游体）"},
+    {"id": "m-true__sse", "endpoint": "/v1/messages", "stream": true, "upstream": "SSE", "observed": "200 text/event-stream（照搬）"},
+    {"id": "m-strfalse__sse", "endpoint": "/v1/messages", "stream": "\"false\"", "upstream": "SSE", "observed": "200 text/event-stream（照搬）"},
+    {"id": "m-1__sse", "endpoint": "/v1/messages", "stream": 1, "upstream": "SSE", "observed": "200 text/event-stream（照搬）"},
+    {"id": "m-absent__sse", "endpoint": "/v1/messages", "stream": "（无）", "upstream": "SSE", "observed": "200 text/event-stream（照搬）"},
+    {"id": "m-false__sse", "endpoint": "/v1/messages", "stream": false, "upstream": "SSE", "observed": "200 text/event-stream（照搬）"},
+    {"id": "c-true__json", "endpoint": "/v1/chat/completions", "stream": true, "upstream": "JSON", "observed": "200 text/event-stream（**转成 OpenAI SSE**）"},
+    {"id": "c-strfalse__sse", "endpoint": "/v1/chat/completions", "stream": "\"false\"", "upstream": "SSE", "observed": "200 text/event-stream（**转成 OpenAI SSE**）"},
+    {"id": "c-absent__sse", "endpoint": "/v1/chat/completions", "stream": "（无）", "upstream": "SSE", "observed": "**502** `{\"error\":{\"message\":\"上游响应格式异常\",\"type\":\"upstream_error\"}}`"}
+  ],
+  "_response_path_conclusion": "**`/v1/messages` 的响应与入站的 `stream` 字段完全无关** —— 上游给 JSON 就回 JSON、给 SSE 就回 SSE（纯透传）。`stream` 只在 `/v1/chat/completions` 上决定响应形状，且同样用**真值**判定。",
+  "response_header_probes": [
+    {
+      "id": "h-ct-textplain",
+      "upstream_headers": "Content-Type: text/plain",
+      "inbound_headers": "content-type: text/plain; charset=utf-8",
+      "conclusion": "Content-Type **照搬上游**，`text/*` 被 uvicorn/Starlette 追加 `; charset=utf-8`。"
+    },
+    {
+      "id": "h-ct-custom-plus-extra",
+      "upstream_headers": "Content-Type: text/x-probe, X-Custom-Probe: abc",
+      "inbound_headers": "content-type: text/x-probe; charset=utf-8（**没有** X-Custom-Probe）",
+      "conclusion": "**只搬 Content-Type**，上游的其它响应头**不透传**。"
+    },
+    {
+      "id": "h-always-cache-control",
+      "upstream_headers": "（默认 application/json）",
+      "inbound_headers": "cache-control: no-cache, content-type, date, server: uvicorn, transfer-encoding: chunked",
+      "conclusion": "入站**总是**带 `cache-control: no-cache`；`server` / `date` / `transfer-encoding` 是 uvicorn 自己加的。"
+    }
+  ],
+  "derived_rules": {
+    "preview": "遍历 messages（必须是数组、元素必须是对象）：role 严格等于 \"user\" 时 —— content 是字符串 ⇒ preview = 它；content 是数组 ⇒ 取第一个 `type==\"text\"` 块的 `text`（缺 text 键 ⇒ 空串）；两者都取不到 ⇒ **不动** preview。",
+    "model": "`body.get(\"model\") or \"-\"`（缺键 / null / 空串 ⇒ `-`）。",
+    "stream": "`bool(body.get(\"stream\"))` 的 Python 真值语义。",
+    "reqid": "16 位小写 hex，同一请求的所有日志行共用。",
+    "response_headers": "只搬上游的 Content-Type（text/* 追加 charset），另外总是加 `cache-control: no-cache`。"
+  }
+}

@@ -54,13 +54,50 @@
 > `sanitizeOrdered` 同一思路）；#25 说明 `chat/completions` 入口是「解析成结构 → 重新编码」，
 > 于是键序由**字段声明序**决定。两者不可互推，Go 实现要分别对齐。
 
+### 三之三、出站 body 的**序列化形态** = Python `json.dumps(..., ensure_ascii=False)`
+
+用「紧凑 + 非规范」的入站体（无空格、键序打乱、`1e3`/`1.0`、`\u4e2d`、`\u0041`）
+反向探明：出站 body **不是**保原样拼接，而是 **`json.loads` → 改 → `json.dumps`** 的往返。
+探针：`D:/tmp/probe_body.py`（本轮）；全部结论都有对应实测行。
+
+| # | 事实 | 实测 |
+|---|---|---|
+| 40 | 分隔符是 Python **默认** `", "` / `": "`（**带空格**）—— 与 httpx 的 `json=`（紧凑）不同，说明参考实现是显式 `content=json.dumps(...)` | 入站紧凑 `{"model":"x","max_tokens":1}` → 出站 `{"model": "x", "max_tokens": 1}` |
+| 41 | `ensure_ascii=**False**`：非 ASCII **不**转义 | 入站 `"\u4e2d\u6587"` → 出站 `"中文"` |
+| 42 | 字符串被**解码再重编**：`\u0041` → `A` | 入站 `"a<b>&c \u0041"` → 出站 `"a<b>&c A"` |
+| 43 | `< > &` **不**转义（与 httpx/Python 默认一致） | 同上 |
+| 44 | **数字经 Python 数值类型往返**：带 `.`/`e` 的字面量走 float，`1e3` → `1000.0`；整数走任意精度 int，`100` → `100`、`-0` → `0` | 入站 `{"a":1e3,"b":1.0,"c":100}` → 出站 `{"a": 1000.0, "b": 1.0, "c": 100}` |
+| 45 | 整棵子树（含已是数组的 `content`、对象内的多余空白）被**重新序列化** | 入站 `[ { "type" : "text" , "text" : "hi" } ]` → 出站 `[{"type": "text", "text": "hi"}]` |
+| 46 | 顶层与嵌套的**键序一律保留**（Python dict 保插入序） | 入站 `messages, model, max_tokens` → 出站同序 |
+
+> 推论（Go 侧实现约束）：**不能**用 `map[string]any`，也**不能**只做「原文拼接」——
+> 需要「有序解析 → 改写 → Python 兼容序列化」。`1e3`→`1000.0` 这类要求数字
+> **按 Python 的 float `repr` 规则**重排（最短往返 + 整数补 `.0` + 指数阈值 16）。
+> 整数必须**任意精度**（Python int 无上限），所以不能用 float64 承载整数。
+
+### 三之四、出站头的**完整集合**（修正 #18 的漏项）
+
+对 41 条真实转发请求逐头统计（`--log-connects` 全量采样）：
+
+| # | 事实 | 依据 |
+|---|---|---|
+| 47 | 消息转发固定 11 个头：`Accept: */*`、`Accept-Encoding: gzip, deflate`、`Anthropic-Version: 2023-06-01`、**`Connection: keep-alive`**、`Content-Length`、`Content-Type: application/json`、`Http-Referer: https://zcode.z.ai`、`User-Agent: ZCode/3.14.4`、`X-Api-Key: <账号 token>`、`X-Zcode-Agent: glm`、`X-Zcode-App-Version: 3.14.4` | 41/41 条全部命中 |
+| 48 | `client/configs` 请求**只有 4 个头**：`Accept`、`Accept-Encoding`、`Connection`、`User-Agent: ZCode/3.14.4`（**无** `Content-Type`、**无**鉴权） | 42/42 条 |
+| 49 | `event/report` 的头是 `Accept`、`Accept-Encoding`、`Connection`、`Content-Length`、`Content-Type: application/json`、`User-Agent: python-httpx/0.28.1` | 84/84 条 |
+| 50 | 上游**响应**头里 `Content-Type` 带 charset（`application/json; charset=utf-8`，configs/event 两路）；而 `messages` 上游错误响应是 `application/json`（无 charset） | 同上三路的 `resp_headers` |
+
+> **修正 `fixtures/outbound-requests.json`**：该夹具的 `headers` 段漏了
+> `Connection: keep-alive`（#47 证明它 41/41 都在）。夹具已按实测补齐。
+> `README.md` 说的「逐字节保持采样原样」仍然成立 —— 漏项是生成夹具时的过滤造成的，
+> 不是采样本身的差异。
+
 ## 四、模型表：`/v1/models` 的来源（**修正 A3 的一处假设**）
 
 | # | 事实 | 依据 |
 |---|---|---|
 | 26 | 入站 `GET /v1/models` 返回 `GLM-5.3` / `GLM-5.3-Flash`，**恰好等于** `client/configs` 的 `data.builtinModels[].modelId` | `01-client-configs.GET.json` + `gateway/23-models-ok.GET.json` |
 | 27 | **但顺序不同**：`/v1/models` 是 Flash 在前，`builtinModels` 是 `GLM-5.3` 在前 ⇒ **不是从 configs 派生的** | 两处样本对照 |
-| 28 | **模型名不影响「是否出站」**：目录外模型（`no-such-model-xyz`）与目录内模型（`GLM-5.3`）**都会**尝试转发 | 全场景采样：`m-unknown-model` 同样产出转发请求 |
+| 28 | **模型名不影响「是否出站」**：目录外模型（`no-such-model-xyz`）、另一张表里的 `GLM-5.3-Flash`、甚至空串 `""` **都照常转发**，且 `model` 原样写进出站体 | 假上游探针（`tools/behavior_diff.py` 场景机制）：三者各 `status=200 outbound=1`，出站 `model` 逐字保留。**更正**：此前引用的「全场景采样里 `m-unknown-model` 同样产出转发请求」**不成立** —— 那一轮该场景池已空、**零出站**（见 `fixtures/outbound-requests.json` 的 `_pairing_fix`），结论本身对，但判据要换成这条探针 |
 | 29 | 把 `client/configs` 阻断成 502 后 `/v1/models` **仍返回同样两张表** ⇒ **模型表是编译期常量**，无需回落逻辑 | `behavior.md` 第五节（`tools/behavior_diff.py --scenario configs-down`） |
 
 > **待钉死项已钉死**（原记：「把 `client/configs` 阻断后是否回落到内置常量」）：
@@ -78,12 +115,47 @@
 | 33 | 上一轮记的「≈4–5 个账号/请求」**是池被部分消耗后的假象**。真实语义是「**按顺序试到成功为止**」，假 token 必然全败 ⇒ 一个请求就能把整个池抽干 | 池 41 → 首个请求后 `pool=0` |
 | 34 | 失败分四类，日志文案固定：`鉴权失败 401`（上游 401）、`连接失败`（传输层）、`install 账号 X 安装序部分失败: <原因>`（安装序降级，如 `client/configs 失败`）、终态 `无可用账号 / 额度均已耗尽 / 并发已满` | 全场景日志 |
 | 35 | 账号首次转发失败（401）后转 `invalid`，后续请求不再用它 | 池计数下降 + 账号 `recent_results` |
-| 36 | **每次尝试前都会拉一次 `client/configs`**（单次请求内可看到多次 configs 抓取） | 42 条 configs vs 41 条转发 |
+| 36 | ~~每次尝试前都会拉一次 `client/configs`~~ **【已更正】** `client/configs` 属**账号级安装序**（每账号 1 次，加入池时后台跑），**转发路径上不调用**。原判据「42 条 configs vs 41 条转发」正好说明它按**账号**计数（41 账号 + 1 次进程级 = 42），与尝试次数无关 | 见 `behavior.md` 第四节的计数与交错顺序证据 |
 
 > **结论**：上一轮登记的「为什么部分请求完全没有 `api.z.ai` 出站」**已解释** ——
 > 池被前一个请求抽干后，后续请求**在本地直接 503，零出站**。与模型名、代理、
 > 安装序都无关。**不是未实现的分支**，不需要在 Go 里显式报错，而要在调度器里正确实现
 > 「逐个账号试到成功」的语义。
+>
+> 全量采样的计数复核：41 个账号 → 39 条 `鉴权失败 401` + 2 条 `连接失败` = 41 次尝试，
+> 11 次入站请求全部以 `503` 结束（首个请求抽干整池）⇒ 与 #32/#33 一致。
+
+### 五之二、分类边界（**本轮实测补全**，详见 `behavior.md` 第三节）
+
+| # | 事实 | 依据 |
+|---|---|---|
+| 51 | `>>> <reqid>  <model>  sync\|stream  "<preview>"` 是**请求进入路由时**打的，**不是成功标记**（11 次请求 11 条 `>>>`，其中 10 次以 503 结束）；`<reqid>` 是 16 位小写 hex | `serve.log` 计数 + 交错顺序 |
+| 52 | 「客户端错直接透传」分支覆盖 **4xx 中的非特判类**：`400`/`404`/`408`/`422` 都透传且**不切账号**（不只是 400） | 探针 `p-404`/`p-408`/`p-422` |
+| 53 | `402` 是**独立分类**：`额度用完，切换下一个` | 探针 `p-402` |
+| 54 | `429` **缺 `Retry-After` 时退避 60s** | 探针 `p-429-noheader`（3 次间隔实测 180s） |
+| 55 | `5xx` 的退避**固定 5s，不读 `Retry-After`** | 探针 `p-500-ra1`（`Retry-After: 1` 时仍实测 18.5s） |
+| 56 | `503` 走 5xx 分支（重试 3 × 5s + 冷却 300s） | 探针 `p-503` |
+
+### 五之三、`>>>` 行的三项取值（**本轮由探针钉死**，详见 `fixtures/route-log-probes.json`）
+
+| # | 事实 | 依据 |
+|---|---|---|
+| 57 | **第 4 字段是「最后一条 `role=="user"` 消息的首段文本」**，不是首条消息 —— m-multiturn（`[user hi, assistant yo, user again]`）印 `again` | 探针 `p-first-vs-last`（构造首/末/末-user 三者互不相同） |
+| 58 | 数组形态的 `content` 取**第一个 `type=="text"` 块**的 `text`；非 text 块被跳过；role 比较**大小写敏感**（`"USER"` 不算） | 探针 `p-array-first-text-block`/`p-array-skips-nontext-block`/`p-role-case-sensitive` |
+| 59 | 「取到空串 ⇒ **覆盖**」与「取不到 ⇒ **不覆盖**」是两种不同结果：`[{user "A"},{user ""}]` → `""`；`[{user []},{user "B"}]` → `"B"`；`[{user "OLD"},{user}]` → `"OLD"`（回落） | 探针 `p-empty-string-overwrites`/`p-empty-array-does-not-overwrite`/`p-missing-content-falls-back` |
+| 60 | `model` 用**真值**判定：缺键 / `null` / **空串**都印 `-`；且**不做模型名校验**（目录外模型原样回显） | 探针 `p-model-missing`/`p-model-null`/`p-model-empty-string`/`p-model-unknown-passthrough` |
+| 61 | `sync\|stream` 用 **Python 真值**，不是 `is True`：`"false"` / `"0"` / `1` / `[0]` 都印 `stream`；`0` / `""` / `[]` / `{}` / `null` 印 `sync` | 探针 `p-stream-*`（13 例） |
+| 62 | **参考实现有两处未处理异常**（入站 500 `text/plain`、零出站、连 `>>>` 都不打）：① `model` 是非字符串非 null（如 `123`）；② text 块的 `text` 不是字符串（如 `123`） | 探针 `p-model-number`/`p-text-nonstring`；本实现**有意偏离**，见 `behavior.md` §六之二 |
+
+### 五之四、响应形状与响应头（**本轮实测**）
+
+| # | 事实 | 依据 |
+|---|---|---|
+| 63 | `/v1/messages` 的响应**完全不看**入站的 `stream`：入站无 `stream` / 显式 `stream:false` 时，上游给 SSE 照样 **200 原样透传 SSE** | 探针 `m-absent__sse`/`m-false__sse`；`behavior_diff.py --scenario sse-to-nonstream` |
+| 64 | 此前的「非流式请求收到 SSE → 502 `上游响应格式异常`」**挂错了入口**：它只发生在 **`/v1/chat/completions`** 且入站 `stream` 为**假值**时 | 探针 `c-absent__sse`（502） vs `m-absent__sse`（200） |
+| 65 | `/v1/chat/completions` 的 `stream` 用**同一个真值**判定：`stream:"false"` 也走 OpenAI SSE 转换；`stream:true` + 上游 JSON 也会被**转成 SSE** | 探针 `c-strfalse__sse`/`c-true__json` |
+| 66 | `/v1/messages` 的入站响应头**只搬上游的 `Content-Type`**（`text/*` 追加 `; charset=utf-8`），上游其它响应头**一律不透传**；另**总是**加 `cache-control: no-cache` | 探针 `h-ct-textplain`/`h-ct-custom-plus-extra`/`h-always-cache-control` |
+| 67 | `429` 每个账号**出站 6 次**（1 首次 + 5 重试）、`5xx` 每个账号**出站 4 次**（1 首次 + 3 重试） | `behavior_diff.py --scenario upstream-429`（12 条）/ `upstream-500`（8 条），2 账号 |
 
 ## 六、工具缺陷（导致上一轮漏采，已修）
 
@@ -99,4 +171,10 @@
 - 上游 **429 / 5xx / 风控 3012 / 验证码挑战** 的真实回执与冷却时长。
 - `client/configs` 的 `builtin_provider_config_json`（指向 CDN 的二次配置）内容。
 - `messages[].content` 里**非 text 块**（`image` / `tool_use` / `tool_result`）的变换。
-- `/v1/chat/completions` 在 `stream:true` 下的出站 body（该场景池已空，未采到）。
+- **`/v1/chat/completions` 的入站字段映射**：`role: system` 怎么处理、`tools` / `temperature` /
+  `stop` 等 OpenAI 字段是否搬运、`max_tokens` 缺失时的默认值 —— 清单见
+  `fixtures/chat-completions-requests.json` 的 `_gaps`。
+- **上游没有 `Content-Type` 响应头时**的入站 `Content-Type`（假上游总会带一个，测不出）。
+- 上游 `Retry-After` 是 **HTTP-date** 而非整数时的行为。
+- **3xx / 1xx 上游状态码**的处置（见 `behavior.md` §六：Go 侧按「非 2xx 且未特别分类
+  ⇒ 走客户端错透传」并已登记）。

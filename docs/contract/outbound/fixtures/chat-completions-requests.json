@@ -1,0 +1,41 @@
+{
+  "_about": "`POST /v1/chat/completions` 的**入站↔出站配对**。与 outbound-requests.json 的关键区别：这个入口的出站 body 是**重建**的（键序固定 `model, messages, max_tokens[, stream]`），不是保序改写。",
+  "_captured": "2026-10-04",
+  "_sources": "两条来源：① `real-capture` = 真实出站经本地 MITM 捕获（假 apiKey，上游 401）；② `harness` = tools/behavior_diff.py 的假上游场景（上游响应被当作输入参数），出站同样经 MITM 捕获。两者对同一入站体给出**逐字节相同**的出站，互为交叉验证。",
+  "route": "POST https://api.z.ai/api/anthropic/v1/messages",
+  "pairs": [
+    {
+      "scenario": "c-string",
+      "source": "real-capture",
+      "endpoint": "/v1/chat/completions",
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}], \"max_tokens\": 16}"
+    },
+    {
+      "scenario": "ok-openai",
+      "source": "harness",
+      "endpoint": "/v1/chat/completions",
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}], \"max_tokens\": 16}"
+    },
+    {
+      "scenario": "ok-openai-stream",
+      "source": "harness",
+      "endpoint": "/v1/chat/completions",
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": true, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}], \"max_tokens\": 16, \"stream\": true}"
+    }
+  ],
+  "_observations": [
+    "键序固定为 `model, messages, max_tokens`，入站有 `stream` 时追加在**末尾**（与入站键序无关：入站是 model/max_tokens/stream/messages，出站是 model/messages/max_tokens/stream）。",
+    "`messages[].content` 的字符串包装规则与 `/v1/messages` 相同（`[{type:text,text:…}]`）。",
+    "`max_tokens` 被**保留**在重建结果里；入站没给 `max_tokens` 时是否补默认值 —— **未采样**（见 _gaps）。"
+  ],
+  "_gaps": [
+    "`stream: true` 的**真实**出站（真实采样那一轮池已空，未采到）；此处 harness 那条是假上游场景下的出站，可信度等同出站契约（出站与上游响应无关）。",
+    "OpenAI 侧 `role: system` 的消息如何映射（是抽成 Anthropic `system` 还是原样留在 `messages`）—— **未采样**。",
+    "`tools` / `tool_choice` / `temperature` / `top_p` / `stop` 等 OpenAI 字段是否被搬过去 —— **未采样**。",
+    "`max_tokens` 缺失时的默认值 —— **未采样**。",
+    "`n` / `presence_penalty` / `frequency_penalty` / `response_format` 等仅 OpenAI 有、Anthropic 没有的字段是否被丢弃 —— **未采样**。"
+  ]
+}

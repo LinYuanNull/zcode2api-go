@@ -1,8 +1,10 @@
 {
-  "_about": "出站转发请求的**逐场景原始证据**（A4-4 body 变换的判据来源）。",
+  "_about": "出站转发请求的**逐场景原始证据**（A4 body 变换的判据来源）：每条的 `inbound` 是采样器实际发出的入站体、`outbound` 是 MITM 在线上捕获的**原始字节**。",
   "_captured": "2026-10-04",
   "_method": "本地 MITM（tools/mitmupstream capture 模式）捕获的明文请求；账号为假 apiKey，上游一律 401。",
-  "_redaction": "按 docs/contract/README.md 取值规则：账号 token 头替换为 <redacted:account-token>；其余逐字保留（含键序）。",
+  "_redaction": "按 docs/contract/README.md 取值规则：账号 token 头替换为 <redacted:account-token>；其余逐字保留（含键序与空白）。",
+  "_header_fix": "2026-10-04 复核 41 条真实转发请求后补上此前漏掉的 Connection: keep-alive（41/41 条都在）。Content-Length 逐请求不同（由 body 长度决定），不列固定值。见 observations.md #47。",
+  "_scope": "本文件只收 **`POST /v1/messages`** 的入站↔出站配对（保序改写）。`/v1/chat/completions` 的**重建**语义另见 fixtures/chat-completions-requests.json。",
   "route": "POST https://api.z.ai/api/anthropic/v1/messages",
   "headers": {
     "Accept": [
@@ -13,6 +15,9 @@
     ],
     "Anthropic-Version": [
       "2023-06-01"
+    ],
+    "Connection": [
+      "keep-alive"
     ],
     "Content-Type": [
       "application/json"
@@ -33,38 +38,65 @@
       "3.14.4"
     ]
   },
-  "requests": [
+  "pairs": [
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
+      "scenario": "m-string",
+      "endpoint": "/v1/messages",
+      "attempts": 10,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
     },
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"system\": \"be brief\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
+      "scenario": "m-array",
+      "endpoint": "/v1/messages",
+      "attempts": 10,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
     },
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"system\": [{\"type\": \"text\", \"text\": \"be brief\"}], \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
+      "scenario": "m-system",
+      "endpoint": "/v1/messages",
+      "attempts": 5,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"system\": \"be brief\", \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"system\": \"be brief\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
     },
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}, {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"yo\"}]}, {\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"again\"}]}]}"
+      "scenario": "m-system-arr",
+      "endpoint": "/v1/messages",
+      "attempts": 5,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"system\": [{\"type\": \"text\", \"text\": \"be brief\"}], \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"system\": [{\"type\": \"text\", \"text\": \"be brief\"}], \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
     },
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"tools\": [{\"name\": \"get_time\", \"description\": \"d\", \"input_schema\": {\"type\": \"object\", \"properties\": {}}}], \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
+      "scenario": "m-multiturn",
+      "endpoint": "/v1/messages",
+      "attempts": 5,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}, {\"role\": \"assistant\", \"content\": \"yo\"}, {\"role\": \"user\", \"content\": \"again\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}, {\"role\": \"assistant\", \"content\": [{\"type\": \"text\", \"text\": \"yo\"}]}, {\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"again\"}]}]}"
     },
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": true, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
+      "scenario": "m-tools",
+      "endpoint": "/v1/messages",
+      "attempts": 5,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"tools\": [{\"name\": \"get_time\", \"description\": \"d\", \"input_schema\": {\"type\": \"object\", \"properties\": {}}}], \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"tools\": [{\"name\": \"get_time\", \"description\": \"d\", \"input_schema\": {\"type\": \"object\", \"properties\": {}}}], \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
     },
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"temperature\": 0.3, \"top_p\": 0.9, \"stop_sequences\": [\"END\"], \"metadata\": {\"user_id\": \"u1\"}, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
+      "scenario": "m-stream",
+      "endpoint": "/v1/messages",
+      "attempts": 5,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": true, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"stream\": true, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
     },
     {
-      "path": "/api/anthropic/v1/messages",
-      "body": "{\"model\": \"GLM-5.3\", \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}], \"max_tokens\": 16}"
+      "scenario": "m-extra",
+      "endpoint": "/v1/messages",
+      "attempts": 5,
+      "inbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"temperature\": 0.3, \"top_p\": 0.9, \"stop_sequences\": [\"END\"], \"metadata\": {\"user_id\": \"u1\"}, \"messages\": [{\"role\": \"user\", \"content\": \"hi\"}]}",
+      "outbound": "{\"model\": \"GLM-5.3\", \"max_tokens\": 16, \"temperature\": 0.3, \"top_p\": 0.9, \"stop_sequences\": [\"END\"], \"metadata\": {\"user_id\": \"u1\"}, \"messages\": [{\"role\": \"user\", \"content\": [{\"type\": \"text\", \"text\": \"hi\"}]}]}"
     }
-  ]
+  ],
+  "_pairing": "配对方式：把 41 条转发请求按时间序做「等值分组」得 8 个 run，再按采样器的场景顺序对齐。`attempts` 是该场景在**全量采样**里的出站次数（每 run 的条数 = 该场景耗尽池子时的账号尝试数）。",
+  "_pairing_fix": "2026-10-04 复核原始 JSONL（C:/Users/lcq/AppData/Local/Temp/zcode_a4_full/outbound.jsonl）后发现上一版有**一条错配**：上一版给 `m-unknown-model` 配的 outbound 是 `{\"model\": \"GLM-5.3\", \"messages\": …, \"max_tokens\": 16}`（键序 `model/messages/max_tokens`，且 model 被换成 GLM-5.3），那是 **`/v1/chat/completions` 重建路径**的产物，不是 `/v1/messages` 保序改写的产物。判据：`m-unknown-model` 的 `>>>` 行（`85361e97652663cd  no-such-model-xyz  sync  \"hi\"`）后面**紧跟** `<!> 无可用账号…`、中间**没有任何 `[~]` 账号行** ⇒ 池已空、该场景**零出站**，根本没有可配对的 outbound。那条记录的真实归属是 `c-string`（见 chat-completions-requests.json）。本版已删除该错配项。",
+  "_dedup_note": "旧版夹具只存 8 条**去重后**的出站 body；这一版补上了对应的入站体与出站次数，可以直接当 body 变换测试的数据源。"
 }
