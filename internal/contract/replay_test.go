@@ -222,33 +222,23 @@ var steps = []step{
 	{file: "gateway/24-messages-badjson.POST.json", bearer: bearerGW,
 		body: `not-json`},
 
-	// ── 已知分歧 ③：503「无可用账号」在本顺序里走不到（需 A4 调度链路）──
+	// ── A4 更新：503「无可用账号」已由真实调度链路命中 ──
 	//
 	// 采样顺序在 `20-import-ok` 往池里放了一条**active** 账号（靶机实测：导入即
-	// `status=active` / `enabled=true` / `quota_pool` 计入），所以这两条样本在靶机上
-	// 命中的不是「空池」，而是**「调度器真的挑了该账号 → 上游 401 → 置 invalid →
-	// 切换无果」**这条更靠后的分支。实测复现：新导入的 active 账号调 `/v1/messages`
-	// 返回 503，随后该账号变成 `status=invalid`、`last_error="鉴权失败 HTTP 401"`。
-	//
-	// 两条分支的**响应体同形**（同 message 同 type），但后者必须先有调度链路 —— 属 A4。
-	// A3 有可用账号时只能显式 501（「未实现必须明确报错」），不伪造 503。
-	// 我们真正实现的那条「空池」分支由 `TestGatewayNoAccountEmptyPool` 逐字节钉住。
+	// `status=active` / `enabled=true`），所以这两条样本在靶机上命中的不是「空池」，
+	// 而是**「调度器真的挑了该账号 → 上游不可达 → 冷却 → 切换无果」**。
+	// A4 接通调度后本实现走的就是同一条链路（回放环境无上游 ⇒ 传输层失败 ⇒
+	// 账号冷却 ⇒ 池空 ⇒ 503），响应体与样本同形，**不再是分歧**。
+	// 「空池」分支仍由 `TestGatewayNoAccountEmptyPool` 逐字节钉住。
 	{file: "gateway/24-messages-noaccount.POST.json", bearer: bearerGW,
-		body: `{"model":"glm-4.6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`,
-		divergence: "样本 503 来自 A4 的调度尝试（账号被挑中→上游 401→耗尽）；" +
-			"A3 无调度链路，有可用账号时显式 501。空池同形分支见 TestGatewayNoAccountEmptyPool",
-		wantStatus: http.StatusNotImplemented,
-		wantBody:   `{"detail":"尚未实现：转发链路`},
+		body: `{"model":"glm-4.6","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`},
 
 	{file: "gateway/25-chat-noauth.POST.json", bearer: bearerNone,
 		body: `{"model":"glm-4.6","messages":[]}`},
 	{file: "gateway/25-chat-badjson.POST.json", bearer: bearerGW,
 		body: `not-json`},
 	{file: "gateway/25-chat-noaccount.POST.json", bearer: bearerGW,
-		body:       `{"model":"glm-4.6","messages":[{"role":"user","content":"hi"}]}`,
-		divergence: "同 24-messages-noaccount：样本 503 属 A4 调度尝试分支；A3 显式 501",
-		wantStatus: http.StatusNotImplemented,
-		wantBody:   `{"detail":"尚未实现：转发链路`},
+		body: `{"model":"glm-4.6","messages":[{"role":"user","content":"hi"}]}`},
 
 	{file: "admin/18-settings-put-reset-gwkey.PUT.json", bearer: bearerAdmin,
 		body: `{"gateway_key":""}`},
