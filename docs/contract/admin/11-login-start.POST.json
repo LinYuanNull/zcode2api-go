@@ -1,0 +1,26 @@
+{
+  "route": "/admin/api/login/start",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "label": "contract"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "authorize_url": "<redacted:url>",
+      "expires_in": 300,
+      "flow_id": "<redacted:string>"
+    }
+  },
+  "notes": "发起 Z.AI OAuth。成功返回 {flow_id, authorize_url, expires_in}；flow_id 为服务端会话标识（32 位 hex，样本中已脱敏），authorize_url 为上游授权地址（含上游域名，非本机，样本中已脱敏）。上游不可达时 → 502 {detail:登录初始化失败: …}（也是本路由的错误分支形态）。"
+}

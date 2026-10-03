@@ -1,0 +1,25 @@
+{
+  "route": "/admin/api/claim/manual",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "account_id": "<redacted:uuid>",
+      "captcha_verify_param": "<redacted:string>"
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "JWT 账号不存在"
+    }
+  },
+  "notes": "账号非 JWT 或不存在 → 404 {detail:JWT 账号不存在}。"
+}

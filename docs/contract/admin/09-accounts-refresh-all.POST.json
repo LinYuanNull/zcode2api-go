@@ -1,0 +1,30 @@
+{
+  "route": "/admin/api/accounts/refresh",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "all": true
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "count": 0,
+      "skipped_cooling": 0,
+      "skipped_invalid": 0,
+      "summary": {
+        "fail": 0,
+        "ok": 0
+      }
+    }
+  },
+  "notes": "all=true。返回 {summary, count, skipped_cooling, skipped_invalid}；空池 / 无 JWT 账号时 count=0，summary 为空映射。"
+}

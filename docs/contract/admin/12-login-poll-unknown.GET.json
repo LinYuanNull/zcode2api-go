@@ -1,0 +1,21 @@
+{
+  "route": "/admin/api/login/poll/00000000-0000-0000-0000-000000000000",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "status": "expired"
+    }
+  },
+  "notes": "未知 flow_id 一律返回 {status:expired}（HTTP 200），不返回 404。已知 flow 的其它取值：pending / ready / failed（failed 附 message）。"
+}

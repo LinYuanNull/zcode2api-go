@@ -1,0 +1,24 @@
+{
+  "route": "/admin/api/claim/captcha-config",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "enabled": true,
+      "prefix": "no8xfe",
+      "region": "cn",
+      "scene_id": "11xygtvd"
+    }
+  },
+  "notes": "返回阿里验证码 SDK 初始化参数 {enabled, scene_id, region, prefix}；取值来自上游验证码服务（随环境变化，可能为空串）。"
+}

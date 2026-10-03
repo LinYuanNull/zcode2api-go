@@ -1,0 +1,25 @@
+{
+  "route": "/admin/api/accounts",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "provider": "zai",
+      "tokens": []
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "请输入至少一个 Token / API Key"
+    }
+  },
+  "notes": "tokens 为空 → 400 {detail:请输入至少一个 Token / API Key}。"
+}

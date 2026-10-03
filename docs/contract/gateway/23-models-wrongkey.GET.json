@@ -1,0 +1,21 @@
+{
+  "route": "/v1/models",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 403,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "API Key 无效"
+    }
+  },
+  "notes": "凭证错误 → 403 {detail:API Key 无效}。"
+}

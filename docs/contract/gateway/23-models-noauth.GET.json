@@ -1,0 +1,19 @@
+{
+  "route": "/v1/models",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "缺少 API Key"
+    }
+  },
+  "notes": "已配置网关 Key 但请求不带凭证 → 401 {detail:缺少 API Key}。"
+}

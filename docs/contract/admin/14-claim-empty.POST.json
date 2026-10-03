@@ -1,0 +1,26 @@
+{
+  "route": "/admin/api/claim",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "outcomes": [],
+      "summary": {
+        "fail": 0,
+        "ok": 0
+      }
+    }
+  },
+  "notes": "无 JWT 候选账号 → {outcomes:[], summary:{ok:0, fail:0}}。有账号时 outcomes[] 每项含 {account_id, account_name, ok, plan_name?, grants?, message?, code?, next_at?}。"
+}

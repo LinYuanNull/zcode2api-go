@@ -1,0 +1,31 @@
+{
+  "route": "/admin/api/import",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "providers": {
+        "zai": [
+          {
+            "name": "contract-import",
+            "secret": "<redacted:string>"
+          }
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "count": 1
+    }
+  },
+  "notes": "成功导入一条。返回 {count:1}。secret 为明文凭据（样本中已脱敏）。"
+}

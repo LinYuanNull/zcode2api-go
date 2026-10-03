@@ -1,0 +1,21 @@
+{
+  "route": "/admin/api/verify",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "status": "ok"
+    }
+  },
+  "notes": "正确密钥。返回体仅 {status:ok}。"
+}

@@ -1,0 +1,24 @@
+{
+  "route": "/admin/api/settings",
+  "method": "PUT",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "admin_key": "<redacted:string>"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "后台密钥不能为空"
+    }
+  },
+  "notes": "admin_key 为空 → 400 {detail:后台密钥不能为空}。"
+}

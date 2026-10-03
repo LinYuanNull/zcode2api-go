@@ -1,0 +1,24 @@
+{
+  "route": "/admin/api/accounts",
+  "method": "DELETE",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": [
+      "<redacted:account-id>"
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "deleted": 1
+    }
+  },
+  "notes": "成功删除给定 ids（body 为字符串数组）。返回 {deleted:<实际删除数>}。重复 id / 不存在的 id 不计入 deleted。"
+}

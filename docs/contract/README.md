@@ -46,4 +46,12 @@ docs/contract/<area>/<NN>-<route-slug>.<method>.json
 }
 ```
 
-> 采样工具在 A1 阶段落地，会放在 `tools/`（不进发布产物）。
+## 采样工具
+
+采样器在 `tools/samplecontract/`（Go，仅标准库）。它是**开发工具**，不随发布产物分发。
+用法与脱敏规则见该目录 `main.go` 的包注释；采集记录见 [`../../PROVENANCE.md`](../../PROVENANCE.md)。
+
+工具按两层规则脱敏：**键规则**（`token` / `secret` / `admin_key` / `device_mid` /
+`flow_id` / 验证码参数 … → 类型占位符）与**取值规则**（邮箱 / 手机号 / UUID / JWT /
+32 位 hex 形态的字符串 → 类型占位符）。账号 id（形态 `<slug>-<8hex>`）另做精确替换，
+覆盖 `route` 字段里的路径参数。

@@ -1,0 +1,24 @@
+{
+  "route": "/admin/api/accounts/<redacted:account-id>/enabled",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "enabled": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ok": true
+    }
+  },
+  "notes": "成功：enabled=false 禁用该账号。返回 {ok:true}。"
+}

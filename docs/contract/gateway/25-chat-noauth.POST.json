@@ -1,0 +1,24 @@
+{
+  "route": "/v1/chat/completions",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "messages": [],
+      "model": "glm-4.6"
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "缺少 API Key"
+    }
+  },
+  "notes": "无凭证 → 401（与 23 同鉴权依赖）。"
+}

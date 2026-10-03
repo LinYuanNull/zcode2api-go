@@ -1,0 +1,34 @@
+{
+  "route": "/v1/messages",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "max_tokens": 16,
+      "messages": [
+        {
+          "content": "hi",
+          "role": "user"
+        }
+      ],
+      "model": "glm-4.6"
+    }
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "error": {
+        "message": "所有账号均不可用、额度已用完或并发已满，请在后台检查账号状态",
+        "type": "no_available_account"
+      }
+    }
+  },
+  "notes": "合法请求但账号池无可用账号 → 网关错误分支（具体形态以样本为准）。"
+}

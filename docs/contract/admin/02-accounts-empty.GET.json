@@ -1,0 +1,36 @@
+{
+  "route": "/admin/api/accounts",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "accounts": [],
+      "providers": [
+        "zai",
+        "bigmodel"
+      ],
+      "stats": {
+        "active": 0,
+        "calls": 0,
+        "cooling": 0,
+        "disabled": 0,
+        "exhausted": 0,
+        "fail": 0,
+        "invalid": 0,
+        "total": 0
+      },
+      "ts": 1791039292.6844416
+    }
+  },
+  "notes": "空账号池。stats 各计数为 0；providers 为固定枚举 [zai bigmodel]；ts 为 epoch 秒（随环境变化）。"
+}

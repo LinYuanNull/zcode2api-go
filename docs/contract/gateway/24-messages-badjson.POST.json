@@ -1,0 +1,25 @@
+{
+  "route": "/v1/messages",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": "<raw:non-json>"
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "error": {
+        "message": "请求体不是合法 JSON",
+        "type": "invalid_request"
+      }
+    }
+  },
+  "notes": "请求体非合法 JSON → 400 {error:{message:请求体不是合法 JSON, type:invalid_request}}。"
+}

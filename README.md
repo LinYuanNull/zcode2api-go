@@ -50,6 +50,7 @@ zcode2api-go/
 │  └─ captcha/                                   验证码池与求解调度
 │     └─ cdp/                                    自写极简 CDP 客户端
 ├─ docs/contract/             契约样本（只保留结构，见 PROVENANCE.md）
+├─ tools/samplecontract/      契约采样器（开发工具，不随发布产物分发）
 ├─ PROVENANCE.md              实现依据登记（靶机 / 采样时间 / 样本编号）
 └─ .github/workflows/         CI：gofmt / go vet / go build / go test
 ```

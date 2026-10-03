@@ -1,0 +1,21 @@
+{
+  "route": "/admin/api/accounts/00000000-0000-0000-0000-000000000000/fingerprint/rotate",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "账号不存在"
+    }
+  },
+  "notes": "账号不存在 → 404 {detail:账号不存在}。"
+}

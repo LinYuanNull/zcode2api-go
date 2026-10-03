@@ -1,0 +1,24 @@
+{
+  "route": "/admin/api/accounts/<redacted:account-id>",
+  "method": "PUT",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "name": "contract-renamed"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ok": true
+    }
+  },
+  "notes": "成功编辑：改 name。返回 {ok:true}。路径参数为账号 UUID（样本中已脱敏）。"
+}

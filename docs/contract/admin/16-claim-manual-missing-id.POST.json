@@ -1,0 +1,24 @@
+{
+  "route": "/admin/api/claim/manual",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "captcha_verify_param": "<redacted:string>"
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "缺少 account_id"
+    }
+  },
+  "notes": "缺 account_id → 400 {detail:缺少 account_id}。"
+}

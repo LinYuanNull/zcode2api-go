@@ -1,0 +1,29 @@
+{
+  "route": "/admin/api/status",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "gateway_key_set": false,
+      "providers": [
+        "zai",
+        "bigmodel"
+      ],
+      "quota_pool": {
+        "bigmodel": 0,
+        "zai": 0
+      }
+    }
+  },
+  "notes": "gateway_key_set 反映网关 Key 是否配置；quota_pool 为各 provider 可选用账号数。"
+}

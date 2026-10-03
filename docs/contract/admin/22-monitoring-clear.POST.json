@@ -1,0 +1,21 @@
+{
+  "route": "/admin/api/monitoring/clear",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ok": true
+    }
+  },
+  "notes": "清空内存环形日志，返回 {ok:true}。"
+}

@@ -1,0 +1,21 @@
+{
+  "route": "/admin/api/claim/preview",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "preview": []
+    }
+  },
+  "notes": "无 JWT 账号时 preview 为空数组。有账号时每项含 {account_id, account_name, plans[], error, activated, activation_error}。"
+}

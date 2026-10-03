@@ -1,0 +1,24 @@
+{
+  "route": "/admin/api/accounts",
+  "method": "DELETE",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": [
+      "<redacted:uuid>"
+    ]
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "deleted": 0
+    }
+  },
+  "notes": "全部 id 都不存在 → {deleted:0}（不报错）。"
+}

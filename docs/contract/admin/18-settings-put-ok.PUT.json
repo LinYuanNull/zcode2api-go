@@ -1,0 +1,27 @@
+{
+  "route": "/admin/api/settings",
+  "method": "PUT",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "account_concurrency": 2,
+      "claim_round_interval": 0,
+      "gateway_key": "<redacted:string>",
+      "quota_refresh_interval": 1800
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ok": true
+    }
+  },
+  "notes": "成功写入。返回 {ok:true}。本步顺带把 gateway_key 置为已知值，供网关路由采鉴权分支。"
+}

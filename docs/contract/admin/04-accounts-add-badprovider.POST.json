@@ -1,0 +1,27 @@
+{
+  "route": "/admin/api/accounts",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "provider": "nope",
+      "tokens": [
+        "<redacted:string>"
+      ]
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "detail": "不支持的 provider"
+    }
+  },
+  "notes": "provider 不在枚举内 → 400 {detail:不支持的 provider}。"
+}

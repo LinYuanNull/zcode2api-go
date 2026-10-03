@@ -1,0 +1,31 @@
+{
+  "route": "/admin/api/accounts",
+  "method": "POST",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "name": "contract-sample",
+      "provider": "zai",
+      "tokens": [
+        "<redacted:string>"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "count": 1,
+      "ids": [
+        "<redacted:account-id>"
+      ]
+    }
+  },
+  "notes": "成功新增。返回 {count, ids[]}；ids 为服务端生成的账号 id，形态为 <slug>-<8hex>（样本中已脱敏）。"
+}

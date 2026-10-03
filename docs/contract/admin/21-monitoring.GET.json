@@ -1,0 +1,22 @@
+{
+  "route": "/admin/api/monitoring",
+  "method": "GET",
+  "request": {
+    "query": {},
+    "headers": {
+      "Authorization": "<redacted:bearer>"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "entries": [],
+      "keep": 500
+    }
+  },
+  "notes": "返回 {entries:[…], keep:<容量>}。entries 为内存环形日志，含本会话已发生的网关请求（id/model/stream/prompt/status/…）；重启清零，entries 条数随环境变化。"
+}
