@@ -59,11 +59,13 @@
 | # | 事实 | 依据 |
 |---|---|---|
 | 26 | 入站 `GET /v1/models` 返回 `GLM-5.3` / `GLM-5.3-Flash`，**恰好等于** `client/configs` 的 `data.builtinModels[].modelId` | `01-client-configs.GET.json` + `gateway/23-models-ok.GET.json` |
-| 27 | 因此 A1 记录的「模型表为编译期常量（`app/constants.AVAILABLE_MODELS`）」**只是现象的一种解释**；至少存在「由 `builtinModels` 派生」的路径 | 同上 |
+| 27 | **但顺序不同**：`/v1/models` 是 Flash 在前，`builtinModels` 是 `GLM-5.3` 在前 ⇒ **不是从 configs 派生的** | 两处样本对照 |
 | 28 | **模型名不影响「是否出站」**：目录外模型（`no-such-model-xyz`）与目录内模型（`GLM-5.3`）**都会**尝试转发 | 全场景采样：`m-unknown-model` 同样产出转发请求 |
+| 29 | 把 `client/configs` 阻断成 502 后 `/v1/models` **仍返回同样两张表** ⇒ **模型表是编译期常量**，无需回落逻辑 | `behavior.md` 第五节（`tools/behavior_diff.py --scenario configs-down`） |
 
-> **待钉死**：把 `client/configs` 请求阻断（代理返回错误）后 `/v1/models` 是否回落到内置常量。
-> 这决定 Go 实现要不要内嵌兜底表。**未测之前不猜** —— 已登记为 A4 待办。
+> **待钉死项已钉死**（原记：「把 `client/configs` 阻断后是否回落到内置常量」）：
+> 实测**是常量**。A1 的「`app/constants.AVAILABLE_MODELS`」判断成立，
+> Go 实现不需要「从 configs 派生模型表」这条路径。
 
 ## 五、调度行为（**本轮修正了上一轮的错误结论**）
 

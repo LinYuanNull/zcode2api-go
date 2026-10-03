@@ -90,6 +90,9 @@ type rule struct {
 	Times int `json:"times"`
 	// DelayMs > 0 时在响应前等待，用于模拟慢上游 / 观察冷却与超时行为。
 	DelayMs int `json:"delay_ms"`
+	// Abort 为真时**不回任何响应**，直接关掉连接 —— 模拟「连接失败」分支
+	// （靶机的日志里这是与「鉴权失败 401」并列的一类失败）。
+	Abort bool `json:"abort"`
 	// Chunks 非空时按 SSE 分块发送（每个元素一个 `data:` 载荷，自动补 `data: ` 与空行）。
 	Chunks []string `json:"chunks"`
 	// ChunksRaw 非空时按 SSE 分块发送，但**每个元素原样写出**（自带 `event:` 行也照写），
@@ -276,6 +279,12 @@ func serveOne(client net.Conn, req *http.Request, host string, rules []rule, emi
 		}
 		if rl.DelayMs > 0 {
 			time.Sleep(time.Duration(rl.DelayMs) * time.Millisecond)
+		}
+		if rl.Abort {
+			rec.RespStatus = 0
+			rec.Error = "按规则中断连接（模拟连接失败）"
+			emit(rec)
+			return false
 		}
 		hdr := map[string]string{"Content-Type": "application/json"}
 		for k, v := range rl.Headers {
