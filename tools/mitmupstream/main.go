@@ -46,6 +46,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,7 @@ const (
 
 type record struct {
 	TS           float64             `json:"ts"`
+	Kind         string              `json:"kind,omitempty"` // 空=HTTP 请求；connect=CONNECT 目标（含握手失败）
 	Host         string              `json:"host"`
 	Method       string              `json:"method"`
 	Path         string              `json:"path"`
@@ -74,35 +76,49 @@ type record struct {
 
 // rule 是 fake 模式的一条匹配规则。
 type rule struct {
+	Host       string            `json:"host"`        // 空 = 任意；否则要求 host 等于该值或以 .该值 结尾
 	Method     string            `json:"method"`      // 空 = 任意
 	PathSuffix string            `json:"path_suffix"` // 空 = 任意；否则要求 path 以此结尾
 	Status     int               `json:"status"`
 	Headers    map[string]string `json:"headers"`
 	Body       string            `json:"body"`
+	// BodyFile 非空时从该文件读 body（相对规则文件所在目录）。用于内联太长的响应，
+	// 例如 `client/configs` 的真实夹具（23 KB）。
+	BodyFile string `json:"body_file"`
+	// Times > 0 时该规则最多生效 Times 次，之后自动跳过。用于表达「先失败 N 次再成功」
+	// 这类序列（前置规则写 Times，后置规则兜底）。
+	Times int `json:"times"`
+	// DelayMs > 0 时在响应前等待，用于模拟慢上游 / 观察冷却与超时行为。
+	DelayMs int `json:"delay_ms"`
 	// Chunks 非空时按 SSE 分块发送（每个元素一个 `data:` 载荷，自动补 `data: ` 与空行）。
 	Chunks []string `json:"chunks"`
+	// ChunksRaw 非空时按 SSE 分块发送，但**每个元素原样写出**（自带 `event:` 行也照写），
+	// 只在末尾补一个空行。真实 Anthropic SSE 每帧都有 `event:` 行，只发 `data:` 测不透。
+	ChunksRaw []string `json:"chunks_raw"`
 }
+
+// rulesMu 保护 rule.Times 的递减（一次运行内多条连接会并发匹配）。
+var rulesMu sync.Mutex
 
 var (
 	mode      = flag.String("mode", "capture", "capture | fake")
 	listen    = flag.String("listen", "127.0.0.1:0", "监听地址")
 	caOut     = flag.String("ca-out", "", "把 CA 证书 PEM 写到这个路径（给 SSL_CERT_FILE）")
 	logPath   = flag.String("log", "", "把捕获记录追加为 JSON Lines")
-	hostsFlag = flag.String("hosts", "zcode.z.ai,api.z.ai", "叶子证书的 SAN（逗号分隔）")
+	hostsFlag = flag.String("hosts", "zcode.z.ai,api.z.ai", "启动时预热叶子证书的主机（逗号分隔）；其余主机在 CONNECT 时按需动态签发")
 	rulesPath = flag.String("rules", "", "fake 模式的规则文件（JSON 数组）")
 	upstream  = flag.String("upstream", "", "capture 模式下强制转发到该 host:port（默认按 CONNECT 目标）")
+	logConns  = flag.Bool("log-connects", false, "把每个 CONNECT 目标也写成一条记录（kind=connect）")
 )
 
 func main() {
 	flag.Parse()
-	hosts := splitCSV(*hostsFlag)
-
-	caPEM, leaf, err := makeCerts(hosts)
+	ca, err := newCA()
 	if err != nil {
-		log.Fatalf("生成证书失败: %v", err)
+		log.Fatalf("生成 CA 失败: %v", err)
 	}
 	if *caOut != "" {
-		if err := os.WriteFile(*caOut, caPEM, 0o644); err != nil {
+		if err := os.WriteFile(*caOut, ca.caPEM, 0o644); err != nil {
 			log.Fatalf("写 CA 失败: %v", err)
 		}
 	}
@@ -118,6 +134,22 @@ func main() {
 		}
 		if err := json.Unmarshal(b, &rules); err != nil {
 			log.Fatalf("解析规则失败: %v", err)
+		}
+		// body_file 在加载期就解析成绝对路径读进来，运行期规则即自包含。
+		base := filepath.Dir(*rulesPath)
+		for i := range rules {
+			if rules[i].BodyFile == "" {
+				continue
+			}
+			fp := rules[i].BodyFile
+			if !filepath.IsAbs(fp) {
+				fp = filepath.Join(base, fp)
+			}
+			fb, err := os.ReadFile(fp)
+			if err != nil {
+				log.Fatalf("读规则 %d 的 body_file 失败: %v", i, err)
+			}
+			rules[i].Body = string(fb)
 		}
 	}
 
@@ -141,6 +173,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "CAPTURE", string(b[:min(len(b), 400)]))
 	}
 
+	// 预热：--hosts 里的主机先签好叶子证书（其余主机在 CONNECT 时按需签发）。
+	for _, h := range splitCSV(*hostsFlag) {
+		if _, err := ca.leafFor(h); err != nil {
+			log.Fatalf("为 %s 签发叶子证书失败: %v", h, err)
+		}
+	}
+
 	ln, err := net.Listen("tcp", *listen)
 	if err != nil {
 		log.Fatalf("监听失败: %v", err)
@@ -148,23 +187,17 @@ func main() {
 	fmt.Printf("LISTEN %s\n", ln.Addr().String())
 	os.Stdout.Sync()
 
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{leaf},
-		NextProtos:   []string{"http/1.1"},
-		MinVersion:   tls.VersionTLS12,
-	}
-
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {
 			http.Error(w, "this is a CONNECT proxy", http.StatusMethodNotAllowed)
 			return
 		}
-		handleConnect(w, r, tlsCfg, rules, emit)
+		handleConnect(w, r, ca, rules, emit)
 	})}
 	log.Fatal(srv.Serve(ln))
 }
 
-func handleConnect(w http.ResponseWriter, r *http.Request, tlsCfg *tls.Config, rules []rule, emit func(record)) {
+func handleConnect(w http.ResponseWriter, r *http.Request, ca *certAuthority, rules []rule, emit func(record)) {
 	host, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
 		host = r.Host
@@ -181,8 +214,26 @@ func handleConnect(w http.ResponseWriter, r *http.Request, tlsCfg *tls.Config, r
 	defer conn.Close()
 	io.WriteString(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 
-	tlsConn := tls.Server(conn, tlsCfg)
+	// 每个 CONNECT 目标都留痕（否则「没出站」与「出站到了没覆盖的主机」分不清）。
+	if *logConns {
+		emit(record{TS: float64(time.Now().UnixNano()) / 1e9, Kind: "connect", Host: host})
+	}
+
+	leaf, err := ca.leafFor(host)
+	if err != nil {
+		emit(record{TS: float64(time.Now().UnixNano()) / 1e9, Kind: "connect", Host: host,
+			Error: "签发叶子证书失败: " + err.Error()})
+		return
+	}
+	tlsConn := tls.Server(conn, &tls.Config{
+		Certificates: []tls.Certificate{*leaf},
+		NextProtos:   []string{"http/1.1"},
+		MinVersion:   tls.VersionTLS12,
+	})
 	if err := tlsConn.Handshake(); err != nil {
+		// 握手失败也要落一条记录：这正是「请求出去了却什么也看不到」的那种情形。
+		emit(record{TS: float64(time.Now().UnixNano()) / 1e9, Kind: "connect", Host: host,
+			Error: "TLS 握手失败: " + err.Error()})
 		log.Printf("TLS 握手失败 (%s): %v", host, err)
 		return
 	}
@@ -215,13 +266,16 @@ func serveOne(client net.Conn, req *http.Request, host string, rules []rule, emi
 	rec.ReqBodyText, rec.ReqBodyB64 = encodeBody(reqBody)
 
 	if *mode == "fake" {
-		rl := matchRule(rules, req)
+		rl := matchRule(rules, host, req)
 		if rl == nil {
 			rec.RespStatus = 599
 			rec.RespBodyText = "no matching rule"
 			writeResponse(client, 599, map[string]string{"Content-Type": "text/plain"}, []byte("no matching rule"), nil)
 			emit(rec)
 			return false
+		}
+		if rl.DelayMs > 0 {
+			time.Sleep(time.Duration(rl.DelayMs) * time.Millisecond)
 		}
 		hdr := map[string]string{"Content-Type": "application/json"}
 		for k, v := range rl.Headers {
@@ -232,7 +286,19 @@ func serveOne(client net.Conn, req *http.Request, host string, rules []rule, emi
 			status = 200
 		}
 		rec.RespStatus = status
-		if len(rl.Chunks) > 0 {
+		if len(rl.ChunksRaw) > 0 {
+			hdr["Content-Type"] = "text/event-stream"
+			rec.RespChunks = len(rl.ChunksRaw)
+			var acc strings.Builder
+			writeResponse(client, status, hdr, nil, func(flush func([]byte)) {
+				for _, c := range rl.ChunksRaw {
+					frame := c + "\n\n"
+					acc.WriteString(frame)
+					flush([]byte(frame))
+				}
+			})
+			rec.RespBodyText = acc.String()
+		} else if len(rl.Chunks) > 0 {
 			hdr["Content-Type"] = "text/event-stream"
 			rec.RespChunks = len(rl.Chunks)
 			var acc strings.Builder
@@ -332,15 +398,29 @@ func serveOne(client net.Conn, req *http.Request, host string, rules []rule, emi
 	return false
 }
 
-func matchRule(rules []rule, req *http.Request) *rule {
+func matchRule(rules []rule, host string, req *http.Request) *rule {
 	p := req.URL.Path
+	rulesMu.Lock()
+	defer rulesMu.Unlock()
 	for i := range rules {
 		r := &rules[i]
+		if r.Host != "" && !(host == r.Host || strings.HasSuffix(host, "."+r.Host)) {
+			continue
+		}
 		if r.Method != "" && !strings.EqualFold(r.Method, req.Method) {
 			continue
 		}
 		if r.PathSuffix != "" && !strings.HasSuffix(p, r.PathSuffix) {
 			continue
+		}
+		if r.Times < 0 {
+			continue // 已用尽
+		}
+		if r.Times > 0 {
+			r.Times--
+			if r.Times == 0 {
+				r.Times = -1 // 用尽，后续跳过
+			}
 		}
 		return r
 	}
@@ -444,11 +524,26 @@ func min(a, b int) int {
 	return b
 }
 
-// makeCerts 生成自签 CA 与叶子证书，返回 CA 的 PEM 与叶子 tls.Certificate。
-func makeCerts(hosts []string) ([]byte, tls.Certificate, error) {
+// certAuthority 是自签 CA，按需为**任意** CONNECT 目标动态签发叶子证书。
+//
+// 为什么必须动态签发：最初只预生成 `--hosts` 里列出的那几个 SAN。于是当靶机连到
+// 名单外的主机时，客户端证书校验必然失败，而失败发生在 TLS 握手阶段 ——
+// **一条记录都不会留下**。排查「池被消耗但看不到出站」时就被这条坑了很久：
+// 真相是请求出站到了名单外的主机（`open.bigmodel.cn`），不是没出站。
+type certAuthority struct {
+	caCert *x509.Certificate
+	caKey  *ecdsa.PrivateKey
+	caPEM  []byte
+
+	mu    sync.Mutex
+	cache map[string]*tls.Certificate
+	seq   int64
+}
+
+func newCA() (*certAuthority, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, tls.Certificate{}, err
+		return nil, err
 	}
 	caTmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
@@ -461,34 +556,53 @@ func makeCerts(hosts []string) ([]byte, tls.Certificate, error) {
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
 	if err != nil {
-		return nil, tls.Certificate{}, err
+		return nil, err
 	}
 	caCert, err := x509.ParseCertificate(caDER)
 	if err != nil {
-		return nil, tls.Certificate{}, err
+		return nil, err
 	}
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	return &certAuthority{
+		caCert: caCert,
+		caKey:  caKey,
+		caPEM:  pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
+		cache:  map[string]*tls.Certificate{},
+	}, nil
+}
 
-	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, tls.Certificate{}, err
+// leafFor 返回 host 对应的叶子证书（首次调用时签发并缓存）。
+func (ca *certAuthority) leafFor(host string) (*tls.Certificate, error) {
+	ca.mu.Lock()
+	defer ca.mu.Unlock()
+	if c, ok := ca.cache[host]; ok {
+		return c, nil
 	}
-	leafTmpl := &x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: hosts[0]},
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+	ca.seq++
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(2 + ca.seq),
+		Subject:      pkix.Name{CommonName: host},
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(30 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     hosts,
 	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, caCert, &leafKey.PublicKey, caKey)
+	if ip := net.ParseIP(host); ip != nil {
+		tmpl.IPAddresses = []net.IP{ip}
+	} else {
+		tmpl.DNSNames = []string{host}
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.caCert, &key.PublicKey, ca.caKey)
 	if err != nil {
-		return nil, tls.Certificate{}, err
+		return nil, err
 	}
-	leaf := tls.Certificate{
-		Certificate: [][]byte{leafDER, caDER},
-		PrivateKey:  leafKey,
+	c := &tls.Certificate{
+		Certificate: [][]byte{der, ca.caCert.Raw},
+		PrivateKey:  key,
 	}
-	return caPEM, leaf, nil
+	ca.cache[host] = c
+	return c, nil
 }

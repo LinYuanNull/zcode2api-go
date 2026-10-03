@@ -55,12 +55,25 @@
       }
     }
   },
+  "transform_matrix": {
+    "_note": "全场景采样（11 场景 / 41 条真实转发请求）后归纳：**只有 `messages[].content` 的字符串值被改写**，其余字段一律原样。见 observations.md #9–#16。",
+    "messages[].content : string": "包装为 [{\"type\":\"text\",\"text\":<原串>}]",
+    "messages[].content : array": "原样（与字符串包装后的结果逐字相同）",
+    "messages[] : 多轮 / assistant 角色": "逐条按上两行处理，顺序不变",
+    "system : string": "原样，**不**包装成数组",
+    "system : array": "原样",
+    "tools": "原样",
+    "stream": "原样",
+    "temperature / top_p / stop_sequences / metadata": "原样",
+    "model / max_tokens": "原样",
+    "键序": "**保持入站键序**（只改 content 值，不重建对象）"
+  },
   "notes": [
     "**端点**：`https://api.z.ai/api/anthropic/v1/messages` —— 即 `client/configs` 里 `z-ai` + `schema=anthropic` 的 `baseUrl` + `/v1/messages`。",
-    "**鉴权头是 `X-Api-Key`**（不是 `Authorization`）；另有 `Anthropic-Version: 2023-06-01`。",
+    "**鉴权头是 `X-Api-Key`**（不是 `Authorization`），值为账号 token 明文；另有 `Anthropic-Version: 2023-06-01`。",
     "**身份/追踪头**：`User-Agent: ZCode/3.14.4`、`X-Zcode-Agent: glm`、`X-Zcode-App-Version: 3.14.4`、`Http-Referer: https://zcode.z.ai`。",
-    "**body 变换（实测）**：`messages[].content` 的**字符串被包装成 `[{type:text,text:…}]`**；`model`/`max_tokens` 原样。",
+    "**body 变换（实测）**：见 `transform_matrix` —— 唯一被改写的字段是 `messages[].content`（字符串→单元素 text 数组）。",
     "**错误体形态**：上游错误体原样透传为 `{\"error\":{\"message\":…,\"type\":\"401\"}}`（注意 `type` 是**状态码字符串**，与入站网关域错误体的 type 不同）。",
-    "**未采到**：200 成功响应与 SSE 分块（需真实账号）；`system` / `tools` / `stream` 等字段的变换规则**未覆盖**，不凭猜测补全（见 observations.md #5）。"
+    "**未采到**：200 成功响应与 SSE 分块（需真实账号）；上游 429 / 5xx / 风控 / 验证码回执**未覆盖**，不凭猜测补全（见 observations.md 第七节）。"
   ]
 }

@@ -1,0 +1,62 @@
+{
+  "_about": "出站契约样本：`/v1/chat/completions`（OpenAI 兼容入口）的出站 body —— **键序与 `/v1/messages` 不同**。",
+  "_captured": "2026-10-04",
+  "_method": "本地 MITM 终结 TLS；假 apiKey 账号，上游 401，只采到请求侧",
+  "route": "POST https://api.z.ai/api/anthropic/v1/messages",
+  "method": "POST",
+  "request": {
+    "headers": {
+      "Anthropic-Version": "2023-06-01",
+      "Content-Type": "application/json",
+      "Http-Referer": "https://zcode.z.ai",
+      "User-Agent": "ZCode/3.14.4",
+      "X-Api-Key": "<redacted:account-token>",
+      "X-Zcode-Agent": "glm",
+      "X-Zcode-App-Version": "3.14.4"
+    },
+    "body_inbound": {
+      "model": "GLM-5.3",
+      "max_tokens": 16,
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    },
+    "body_outbound": {
+      "model": "GLM-5.3",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi"
+            }
+          ]
+        }
+      ],
+      "max_tokens": 16
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "error": {
+        "message": "token expired or incorrect",
+        "type": "401"
+      }
+    }
+  },
+  "notes": [
+    "**入站键序是 `model, max_tokens, messages`，出站键序是 `model, messages, max_tokens`** —— 顺序被改写了。",
+    "这说明 `/v1/chat/completions` 入口**不是**保序改写，而是「解析成结构 → 按固定字段序重新编码」。",
+    "对照 `02-messages.POST.json`：`/v1/messages` 入口**保持入站键序**。两者不可互推，Go 实现要分别对齐。",
+    "出站 body 仍然是 **Anthropic 形状**（`messages[].content` 为 text 块数组），说明 OpenAI 兼容层只做**入口**归一，出站统一走 Anthropic。",
+    "`stream: true` 的 `/v1/chat/completions` 场景因账号池耗尽未采到，属**未覆盖**（observations.md 第七节）。"
+  ]
+}
