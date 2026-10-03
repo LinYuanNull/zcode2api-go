@@ -280,6 +280,11 @@ func (g *Gateway) passthrough(w http.ResponseWriter, resp *http.Response) {
 }
 
 // writeUpstreamError 透传「客户端错」分支的上游响应。
+//
+// ⚠️ 与成功路径不同：**不加 `cache-control`**。harness 对照
+// （upstream-400 场景，2026-10-04）实测靶机的客户端错响应只有
+// `content-type` 一个头，没有 `cache-control: no-cache` —— 靶机的
+// no-cache 只加在正常响应路径上。这条实测已补进 behavior.md §一。
 func (g *Gateway) writeUpstreamError(w http.ResponseWriter, res scheduler.Result) {
 	ct := res.ClientCT
 	if ct != "" {
@@ -288,7 +293,6 @@ func (g *Gateway) writeUpstreamError(w http.ResponseWriter, res scheduler.Result
 		}
 		w.Header().Set("Content-Type", ct)
 	}
-	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(res.ClientCode)
 	_, _ = w.Write(res.ClientBody)
 }

@@ -483,9 +483,9 @@ func TestCoolingNotExpiredSkipped(t *testing.T) {
 	if atomic.LoadInt32(&n) != 0 {
 		t.Errorf("未到期账号不该被打，出站 %d 次", n)
 	}
-	// 调度器层一行动作日志都不该有（没有账号可试 ⇒ 无分类、无失败）
-	if len(rec.lines) != 0 {
-		t.Errorf("无可用账号时不应有记号行:\n%s", rec.joined())
+	// 池空（含「全部在冷却」）也要打 <!> 收尾行（与靶机一致，见 Do 的注释）
+	if rec.count("无可用账号 / 额度均已耗尽 / 并发已满") != 1 {
+		t.Errorf("应有 <!> 收尾行:\n%s", rec.joined())
 	}
 }
 

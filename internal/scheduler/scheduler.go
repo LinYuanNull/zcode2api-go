@@ -143,9 +143,15 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // Do 逐个账号尝试。
 //
 // SSE 场景下 `Result.Resp.Body` 仍**未读**，由调用方流式转发。
+//
+// 记号约定（behavior.md §3.0/§3.1）：**每次请求都有一条 `>>>`（路由层打），
+// 失败到底的请求以一行 `<!>` 收尾**。池空（没有候选账号）与「试完全部候选都失败」
+// 都打同一句 `无可用账号 / 额度均已耗尽 / 并发已满` —— 基线里 upstream-401 的
+// `<!>` 就是这么来的；此行**不区分**具体失败原因（原因看前面的 `[~]` 行）。
 func (s *Scheduler) Do(ctx context.Context, req Request) Result {
 	candidates := s.candidates()
 	if len(candidates) == 0 {
+		marks.Fail(s.marks, req.ReqID, "无可用账号 / 额度均已耗尽 / 并发已满")
 		return Result{Outcome: OutcomeNoAccount}
 	}
 	for _, acct := range candidates {
@@ -154,6 +160,7 @@ func (s *Scheduler) Do(ctx context.Context, req Request) Result {
 			return res
 		}
 	}
+	marks.Fail(s.marks, req.ReqID, "无可用账号 / 额度均已耗尽 / 并发已满")
 	return Result{Outcome: OutcomeNoAccount}
 }
 
@@ -326,8 +333,9 @@ func (s *Scheduler) passthroughClientError(_ context.Context, req Request, acct 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	agent.DrainAndClose(resp)
 	ct := resp.Header.Get("Content-Type")
-	marks.Notice(s.marks, req.ReqID, "上游 %d 完整响应体: %s", code, string(body))
+	// 顺序实测（harness upstream-400 对照，2026-10-04）：先 <!> 后 [~]。
 	marks.Fail(s.marks, req.ReqID, "上游错误 HTTP %d（账号 %s）", code, acct.Name)
+	marks.Notice(s.marks, req.ReqID, "上游 %d 完整响应体: %s", code, string(body))
 	// 客户端错**不改账号状态**（实测：400 之后账号仍 active、无 recent 追加）。
 	return Result{
 		Outcome:    OutcomeClientError,

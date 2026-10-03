@@ -31,8 +31,9 @@
 |---|---|
 | `Content-Type` | **照搬上游**（上游 `text/plain` → 入站 `text/plain; charset=utf-8`；上游 `text/x-probe` → 入站 `text/x-probe; charset=utf-8`）。`text/*` 追加 `; charset=utf-8` 是 uvicorn/Starlette 的行为。 |
 | 其它上游响应头 | **一律不透传**（探针给上游加了 `X-Custom-Probe: abc`，入站没有它）。 |
-| `cache-control: no-cache` | **总是**加上。 |
+| `cache-control: no-cache` | 正常响应路径**总是**加上（客户端错透传分支除外，见下行）。 |
 | `server` / `date` / `transfer-encoding` | uvicorn 自己加的，不是实现的行为。 |
+| 「客户端错」透传分支的响应头 | **只有** Content-Type（照搬+charset 规则同上），**没有** `cache-control` —— no-cache 只加在正常响应路径（harness `upstream-400` 对照实测，2026-10-04）。 |
 
 **`/v1/chat/completions` 必须解析**（`stream` 用**真值**判定，见 §3.0 末）：
 

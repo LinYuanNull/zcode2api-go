@@ -295,6 +295,11 @@ func TestClientErrorPassthrough(t *testing.T) {
 	if resp.StatusCode != 400 {
 		t.Fatalf("status = %d, 想要 400（客户端错透传）", resp.StatusCode)
 	}
+	// harness 实测（upstream-400）：客户端错响应**没有** cache-control，
+	// 靶机的 no-cache 只加在正常响应路径上。
+	if v := resp.Header.Get("Cache-Control"); v != "" {
+		t.Errorf("Cache-Control = %q, 想要空（客户端错分支不加）", v)
+	}
 	buf := make([]byte, 64)
 	n, _ := ioReadFull(resp.Body, buf)
 	if !strings.Contains(string(buf[:n]), "bad model") {
@@ -304,8 +309,14 @@ func TestClientErrorPassthrough(t *testing.T) {
 	if !strings.Contains(joined, "上游 400 完整响应体:") {
 		t.Errorf("缺 [~] 完整响应体行:\n%s", joined)
 	}
-	if !strings.Contains(joined, "<!>") && !strings.Contains(joined, "上游错误 HTTP 400") {
+	if !strings.Contains(joined, "上游错误 HTTP 400") {
 		t.Errorf("缺 <!> 行:\n%s", joined)
+	}
+	// 顺序实测（harness upstream-400 对照）：先 <!> 后 [~] 完整响应体。
+	failIdx := strings.Index(joined, "上游错误 HTTP 400")
+	noticeIdx := strings.Index(joined, "上游 400 完整响应体:")
+	if failIdx < 0 || noticeIdx < 0 || failIdx > noticeIdx {
+		t.Errorf("记号顺序应是先 <!> 后 [~]:\n%s", joined)
 	}
 }
 
