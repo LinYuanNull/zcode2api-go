@@ -1,0 +1,52 @@
+{
+  "_about": "出站契约样本：遥测上报（`app_launch` / `app_daily_active`）。",
+  "_captured": "2026-10-04",
+  "_method": "本地 MITM；靶机启动时与运行期各上报一次",
+  "route": "POST https://zcode.z.ai/api/v1/event/report",
+  "method": "POST",
+  "request": {
+    "headers": {
+      "Accept": "*/*",
+      "Accept-Encoding": "gzip, deflate",
+      "Connection": "keep-alive",
+      "Content-Type": "application/json",
+      "User-Agent": "python-httpx/0.28.1"
+    },
+    "body": {
+      "event_id": "<uuid>",
+      "client_timezone": "<string: 来自账号指纹，如 Asia/Shanghai>",
+      "client_language": "<string: 来自账号指纹，如 zh-CN>",
+      "element_name": "<enum: app_launch | app_daily_active>",
+      "event_region": "app",
+      "event_type": "view",
+      "event_text": "",
+      "event_extra_detail": {},
+      "user_id": "",
+      "screen_resolution": "<string: 来自账号指纹，如 2560x1440>",
+      "app_version": "3.14.4",
+      "device_os_category": "<string: 来自账号指纹，如 macos>",
+      "device_os_version": "<string: 来自账号指纹，如 25.5.0>",
+      "device_mid": "<string: 来自账号指纹>",
+      "mac_id": "",
+      "marketing_params": "{}"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Encoding": "gzip",
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "code": 0,
+      "msg": "",
+      "logid": "<string: 服务端日志 id>"
+    }
+  },
+  "notes": [
+    "**User-Agent 与消息转发不同**：这里是 `python-httpx/0.28.1`（httpx 默认），消息转发是 `ZCode/3.14.4`。说明两条链路用了不同的 client 配置。",
+    "**body 里的时区/语言/分辨率/OS 全部来自账号的 `fingerprint`** —— 实测同一进程内两次上报分别用了两个不同账号的指纹（Europe/London+1728x1117 与 Asia/Shanghai+2560x1440）。",
+    "`event_id` 每次为随机 uuid；`element_name` 见枚举。",
+    "**属于遥测**：A4 可以不实现（不影响转发正确性），但若要「行为逐项一致」则需照做。已登记为可选项。"
+  ]
+}

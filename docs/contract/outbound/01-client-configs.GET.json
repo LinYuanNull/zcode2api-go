@@ -1,0 +1,109 @@
+{
+  "_about": "出站契约样本：网关 → 上游。A4 转发链路的实现依据。",
+  "_captured": "2026-10-04",
+  "_target": "dengyie/zcode2api v2.6.8（前端 2.6.3），独立临时数据目录 + 假 apiKey 账号",
+  "_method": "本地 MITM（tools/mitmupstream，自签 CA + 叶子证书终结 TLS）；靶机设 HTTPS_PROXY 与 SSL_CERT_FILE 指向本工具",
+  "route": "GET https://zcode.z.ai/api/v1/client/configs?app_version=3.14.4",
+  "method": "GET",
+  "request": {
+    "query": {
+      "app_version": "3.14.4"
+    },
+    "headers": {
+      "Accept": "*/*",
+      "Accept-Encoding": "gzip, deflate",
+      "Connection": "keep-alive",
+      "User-Agent": "ZCode/3.14.4"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Encoding": "gzip",
+      "Content-Type": "application/json"
+    },
+    "body_shape": {
+      "code": "<int:0>",
+      "msg": "<string>",
+      "data": {
+        "providers": [
+          {
+            "id": "<string: bigmodel | z-ai>",
+            "name": "<string>",
+            "schema": "<enum: anthropic | openai:chat>",
+            "baseUrl": "<string: https://…>",
+            "apiKeyUrl": "<string: https://…>",
+            "defaultModel": "<string: glm-4.7>",
+            "modelMapping": {
+              "ANTHROPIC_DEFAULT_HAIKU_MODEL": "<string: glm-4.5-air>"
+            },
+            "models": [
+              {
+                "modelId": "<string: GLM-5.2 | GLM-5-Turbo>",
+                "name": "<string>",
+                "contextWindow": "<int>",
+                "description": "<string>",
+                "priority": "<int>",
+                "capabilities": "<object>",
+                "reasoning": "<object>",
+                "maxCompletionTokens": "<int>"
+              }
+            ],
+            "priority": "<int: 1000 | 2000 | 3000 | 3500>"
+          }
+        ],
+        "builtinProviders": [
+          {
+            "id": "<string: builtin:bigmodel | builtin:bigmodel-coding-plan | builtin:zai-coding-plan | builtin:zai | team-plan:builtin>",
+            "name": "<string>",
+            "schema": "<enum: anthropic>",
+            "baseUrl": "<string: 可为空>",
+            "apiKeyUrl": "<string: 可为空>",
+            "defaultModel": "<string: GLM-5.3>",
+            "models": ["<string: GLM-5.3 | GLM-5.3-Flash>"],
+            "priority": "<int>"
+          }
+        ],
+        "builtinModels": [
+          {
+            "modelId": "<string: GLM-5.3 | GLM-5.3-Flash>",
+            "name": "<string>",
+            "contextWindow": "<int: 1000000>",
+            "description": "<string>",
+            "priority": "<int>",
+            "capabilities": "<object: GLM-5.3-Flash 有 {vision:true}>",
+            "reasoning": "<object>",
+            "modalities": "<object: GLM-5.3-Flash 有 {input:[text,image,video],output:[text]}>",
+            "maxCompletionTokens": "<int: 128000>"
+          }
+        ],
+        "configs": {
+          "builtin_provider_config_json": "<string: https://cdn-zcode.z.ai/…>",
+          "captcha": "<object: {enabled,prefix,region,sceneId,skip_model_request}>",
+          "codingPlanBillingDiscount": "<object: 按语言分区>",
+          "codingPlanStaticProducts": "<object>",
+          "codingPlanStaticTeamProducts": "<object>",
+          "computerUse": "<object>",
+          "desktopContextPrompt": "<object>",
+          "dynamicWorkflow": "<object>",
+          "feedbackUrl": "<object>",
+          "magic_name": "<string>",
+          "notificationCard": "<object>",
+          "offPeak": "<object>",
+          "pluginStoreOrder": "<object>",
+          "rendererActionTrace": "<object>",
+          "startPlanPreview": "<object>"
+        }
+      },
+      "logid": "<string>"
+    }
+  },
+  "notes": [
+    "完整响应体（23,313 B，未脱敏 —— 这是公开目录，无凭据）见 fixtures/client-configs.json。",
+    "**无鉴权头**：这条请求不带任何 token，是公开目录。",
+    "`builtinModels` 恰为 GLM-5.3 / GLM-5.3-Flash ⇒ **入站 `GET /v1/models` 的模型表来自这里**（见 observations.md #1）。",
+    "`providers[]` 4 条 = {bigmodel,z-ai} × {anthropic,openai:chat}，各带 baseUrl 与 priority；`builtinProviders[]` 5 条是内置档位。",
+    "响应 gzip 压缩（`Content-Encoding: gzip`）—— 出站客户端需解压。"
+  ]
+}

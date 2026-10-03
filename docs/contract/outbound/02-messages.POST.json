@@ -1,0 +1,66 @@
+{
+  "_about": "出站契约样本：网关 → 上游的**消息转发**（A4 核心）。",
+  "_captured": "2026-10-04",
+  "_method": "本地 MITM 终结 TLS 后记录明文；账号为假 apiKey（上游返回 401，故只采到请求侧与错误响应侧）",
+  "route": "POST https://api.z.ai/api/anthropic/v1/messages",
+  "method": "POST",
+  "request": {
+    "headers": {
+      "Accept": "*/*",
+      "Accept-Encoding": "gzip, deflate",
+      "Anthropic-Version": "2023-06-01",
+      "Connection": "keep-alive",
+      "Content-Type": "application/json",
+      "Http-Referer": "https://zcode.z.ai",
+      "User-Agent": "ZCode/3.14.4",
+      "X-Api-Key": "<redacted:account-token>",
+      "X-Zcode-Agent": "glm",
+      "X-Zcode-App-Version": "3.14.4"
+    },
+    "body_inbound": {
+      "model": "glm-4.6",
+      "max_tokens": 16,
+      "messages": [
+        {
+          "role": "user",
+          "content": "hi"
+        }
+      ]
+    },
+    "body_outbound": {
+      "model": "glm-4.6",
+      "max_tokens": 16,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hi"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "error": {
+        "message": "token expired or incorrect",
+        "type": "401"
+      }
+    }
+  },
+  "notes": [
+    "**端点**：`https://api.z.ai/api/anthropic/v1/messages` —— 即 `client/configs` 里 `z-ai` + `schema=anthropic` 的 `baseUrl` + `/v1/messages`。",
+    "**鉴权头是 `X-Api-Key`**（不是 `Authorization`）；另有 `Anthropic-Version: 2023-06-01`。",
+    "**身份/追踪头**：`User-Agent: ZCode/3.14.4`、`X-Zcode-Agent: glm`、`X-Zcode-App-Version: 3.14.4`、`Http-Referer: https://zcode.z.ai`。",
+    "**body 变换（实测）**：`messages[].content` 的**字符串被包装成 `[{type:text,text:…}]`**；`model`/`max_tokens` 原样。",
+    "**错误体形态**：上游错误体原样透传为 `{\"error\":{\"message\":…,\"type\":\"401\"}}`（注意 `type` 是**状态码字符串**，与入站网关域错误体的 type 不同）。",
+    "**未采到**：200 成功响应与 SSE 分块（需真实账号）；`system` / `tools` / `stream` 等字段的变换规则**未覆盖**，不凭猜测补全（见 observations.md #5）。"
+  ]
+}
