@@ -52,12 +52,32 @@ const DialTimeout = 30 * time.Second
 type Client struct {
 	proxied *http.Client // 走环境代理（HTTPS_PROXY / HTTP_PROXY / NO_PROXY）
 	direct  *http.Client // 强制直连
+
+	// messagesURL 允许测试指向本地假上游。生产恒为 MessagesURL 常量
+	// （`New()` 不设它 ⇒ 零值回落到常量）。
+	messagesURL string
+}
+
+// endpoint 返回实际使用的消息转发端点。
+func (c *Client) endpoint() string {
+	if c.messagesURL != "" {
+		return c.messagesURL
+	}
+	return MessagesURL
 }
 
 // New 建一个出站客户端。
 func New() *Client {
 	return &Client{proxied: newHTTPClient(true), direct: newHTTPClient(false)}
 }
+
+// SetMessagesURLForTest 让本客户端指向本地假上游，**仅供测试**。
+//
+// 为什么需要它：`MessagesURL` 是编译期常量（契约：端点逐字固定、不可配），
+// 而调度器测试要打到 `httptest` 的本地服务。
+//
+// ⚠️ 生产代码不要调用它 —— 那等于把端点变成可配的，等于放弃契约。
+func (c *Client) SetMessagesURLForTest(u string) { c.messagesURL = u }
 
 // Direct 返回**强制直连**的客户端。
 //
@@ -77,7 +97,7 @@ func (c *Client) PostMessages(ctx context.Context, token string, body []byte) (*
 	if len(body) > maxBody {
 		return nil, errTooLarge
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, MessagesURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
