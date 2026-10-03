@@ -14,18 +14,18 @@
       "Content-Type": "application/json"
     },
     "body": {
-      "exported_at": 1791039293.5511293,
+      "version": 1,
+      "exported_at": 1791042618.613813,
       "providers": {
-        "bigmodel": [],
         "zai": [
           {
-            "mode": "apiKey",
             "name": "contract-renamed",
+            "mode": "apiKey",
             "secret": "<redacted:string>"
           }
-        ]
-      },
-      "version": 1
+        ],
+        "bigmodel": []
+      }
     }
   },
   "notes": "返回 {version, exported_at, providers:{<provider>:[{name, mode, secret}]}}；secret 为**明文**凭据（样本中已整体脱敏为占位符）。exported_at 为 epoch 秒。"

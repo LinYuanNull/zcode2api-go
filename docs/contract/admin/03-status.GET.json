@@ -14,14 +14,14 @@
       "Content-Type": "application/json"
     },
     "body": {
-      "gateway_key_set": false,
       "providers": [
         "zai",
         "bigmodel"
       ],
+      "gateway_key_set": false,
       "quota_pool": {
-        "bigmodel": 0,
-        "zai": 0
+        "zai": 0,
+        "bigmodel": 0
       }
     }
   },

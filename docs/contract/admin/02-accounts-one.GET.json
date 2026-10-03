@@ -16,53 +16,53 @@
     "body": {
       "accounts": [
         {
-          "cooling_until": null,
-          "created_at": 1791039292.6931908,
-          "enabled": true,
-          "fail_count": 0,
-          "fingerprint": {
-            "arch": "arm64",
-            "device_mid": "<redacted:string>",
-            "language": "de-DE",
-            "os_version": "25.5.0",
-            "platform": "darwin",
-            "screen": "1728x1117",
-            "timezone": "Europe/Berlin"
-          },
           "id": "<redacted:account-id>",
-          "install_id": "<redacted:string>",
-          "installed_at": null,
-          "last_checked_at": null,
-          "last_error": null,
-          "last_used_at": null,
-          "mode": "apiKey",
           "name": "contract-sample",
+          "provider": "zai",
+          "mode": "apiKey",
+          "token_masked": "<redacted:masked>",
+          "enabled": true,
+          "status": "active",
+          "quota": {},
           "plan": {},
           "plans": [],
-          "provider": "zai",
-          "quota": {},
-          "recent_results": [],
+          "use_count": 0,
+          "fail_count": 0,
           "risk_strikes": 0,
-          "status": "active",
-          "token_masked": "<redacted:masked>",
-          "use_count": 0
+          "recent_results": [],
+          "last_used_at": null,
+          "last_checked_at": null,
+          "cooling_until": null,
+          "last_error": null,
+          "created_at": 1791042602.6722085,
+          "fingerprint": {
+            "platform": "win32",
+            "arch": "x64",
+            "os_version": "10.0.26100",
+            "language": "en-SG",
+            "timezone": "Asia/Singapore",
+            "screen": "1920x1080",
+            "device_mid": "<redacted:string>"
+          },
+          "install_id": "<redacted:string>",
+          "installed_at": null
         }
       ],
+      "stats": {
+        "total": 1,
+        "active": 1,
+        "exhausted": 0,
+        "cooling": 0,
+        "invalid": 0,
+        "disabled": 0,
+        "calls": 0,
+        "fail": 0
+      },
       "providers": [
         "zai",
         "bigmodel"
       ],
-      "stats": {
-        "active": 1,
-        "calls": 0,
-        "cooling": 0,
-        "disabled": 0,
-        "exhausted": 0,
-        "fail": 0,
-        "invalid": 0,
-        "total": 1
-      },
-      "ts": 1791039292.7750907
+      "ts": 1791042602.77245
     }
   },
   "notes": "含一条 apiKey 账号。public_view 字段集：id/name/provider/mode/token_masked/enabled/status/quota/plan/plans/use_count/fail_count/risk_strikes/recent_results/last_used_at/last_checked_at/cooling_until/last_error/created_at/fingerprint/install_id/installed_at。其中 *_at 为 epoch 秒或 null，fingerprint 为设备档案对象（device_mid 已脱敏）。"

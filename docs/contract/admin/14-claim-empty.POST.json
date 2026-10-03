@@ -17,8 +17,8 @@
     "body": {
       "outcomes": [],
       "summary": {
-        "fail": 0,
-        "ok": 0
+        "ok": 0,
+        "fail": 0
       }
     }
   },

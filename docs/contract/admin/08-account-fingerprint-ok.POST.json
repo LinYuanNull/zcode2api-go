@@ -14,16 +14,16 @@
       "Content-Type": "application/json"
     },
     "body": {
+      "ok": true,
       "fingerprint": {
-        "arch": "arm64",
-        "device_mid": "<redacted:string>",
-        "language": "zh-CN",
-        "os_version": "23.6.0",
         "platform": "darwin",
-        "screen": "1728x1117",
-        "timezone": "Asia/Shanghai"
-      },
-      "ok": true
+        "arch": "arm64",
+        "os_version": "24.6.0",
+        "language": "en-US",
+        "timezone": "America/Los_Angeles",
+        "screen": "1512x982",
+        "device_mid": "<redacted:string>"
+      }
     }
   },
   "notes": "成功：换发设备档案。返回 {ok:true, fingerprint:{platform/arch/os_version/language/timezone/screen/device_mid}}；device_mid 已脱敏，其余为枚举字符串。"

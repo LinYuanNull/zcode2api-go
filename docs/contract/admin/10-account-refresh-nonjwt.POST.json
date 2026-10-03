@@ -14,8 +14,8 @@
       "Content-Type": "application/json"
     },
     "body": {
-      "message": "仅 Coding Plan (JWT) 账号支持额度查询",
-      "ok": false
+      "ok": false,
+      "message": "仅 Coding Plan (JWT) 账号支持额度查询"
     }
   },
   "notes": "非 JWT（apiKey）账号：不查上游，返回 {ok:false, message:仅 Coding Plan (JWT) 账号支持额度查询}。"

@@ -14,14 +14,14 @@
       "Content-Type": "application/json"
     },
     "body": {
-      "account_concurrency": 2,
-      "admin_key_is_default": true,
-      "admin_key_masked": "<redacted:masked>",
       "admin_key_set": true,
-      "claim_round_interval": 0,
-      "gateway_key_masked": "<redacted:masked>",
+      "admin_key_masked": "<redacted:masked>",
+      "admin_key_is_default": true,
       "gateway_key_set": false,
-      "quota_refresh_interval": 1800
+      "gateway_key_masked": "<redacted:masked>",
+      "quota_refresh_interval": 1800,
+      "account_concurrency": 2,
+      "claim_round_interval": 0
     }
   },
   "notes": "返回 {admin_key_set, admin_key_masked, admin_key_is_default, gateway_key_set, gateway_key_masked, quota_refresh_interval, account_concurrency, claim_round_interval}。掩码字段形如 'ab12…'（样本中已脱敏为占位符），布尔与整数为结构性取值。"

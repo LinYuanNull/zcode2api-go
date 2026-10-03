@@ -15,6 +15,8 @@
 //   - 按取值脱敏：邮箱、手机号、UUID、JWT 形态的字符串 → 类型占位符。
 //   - 响应头只保留 Content-Type。
 //   - 环境相关的标量（epoch 时间戳、计数）保留原值，由每条样本的 notes 说明。
+//   - **保留原始键顺序**：清洗走流式 Token（`sanitizeOrdered`），不经过
+//     `map[string]any`。键顺序是可观测契约的一部分（见 docs/contract/README.md）。
 package main
 
 import (
@@ -48,13 +50,13 @@ type sample struct {
 type requestView struct {
 	Query   map[string]string `json:"query"`
 	Headers map[string]string `json:"headers"`
-	Body    any               `json:"body"`
+	Body    json.RawMessage   `json:"body"`
 }
 
 type responseView struct {
 	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers"`
-	Body    any               `json:"body"`
+	Body    json.RawMessage   `json:"body"`
 }
 
 // ── 采样器 ──────────────────────────────────────────────────────────────────
@@ -416,6 +418,9 @@ func (s *sampler) record(area, seq, slug, method, path string, query map[string]
 		case rawJSON:
 			payload = []byte(v)
 		default:
+			// 注意：请求体是**采样器自己构造**的（`map[string]any` 字面量），
+			// 所以样本里请求体的键顺序是 Go 编码 map 的字典序，属**工具产物**，
+			// 不是契约。只有**响应体**的键顺序才是上游的可观测事实（走 sanitizeOrdered）。
 			b, err := json.Marshal(v)
 			if err != nil {
 				return nil, fmt.Errorf("%s %s: 序列化请求体: %w", method, path, err)
@@ -444,7 +449,7 @@ func (s *sampler) record(area, seq, slug, method, path string, query map[string]
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, maxBody))
 
 	// 请求视图
-	reqView := requestView{Query: map[string]string{}, Headers: map[string]string{}, Body: nil}
+	reqView := requestView{Query: map[string]string{}, Headers: map[string]string{}, Body: json.RawMessage("null")}
 	for k, v := range query {
 		reqView.Query[k] = redactString(v)
 	}
@@ -455,10 +460,10 @@ func (s *sampler) record(area, seq, slug, method, path string, query map[string]
 		reqView.Headers["Authorization"] = "<redacted:bearer>"
 	}
 	if body != nil {
-		if v, ok := decodeJSON(payload); ok {
-			reqView.Body = sanitize("", v)
+		if ob, err := sanitizeOrdered(payload, ""); err == nil {
+			reqView.Body = ob
 		} else {
-			reqView.Body = "<raw:non-json>"
+			reqView.Body = mustJSON("<raw:non-json>")
 		}
 	}
 
@@ -468,12 +473,18 @@ func (s *sampler) record(area, seq, slug, method, path string, query map[string]
 		respView.Headers["Content-Type"] = ct
 	}
 	decoded, ok := decodeJSON(raw)
-	if ok {
-		respView.Body = sanitize("", decoded)
-	} else if len(raw) == 0 {
-		respView.Body = nil
-	} else {
-		respView.Body = "<raw:non-json:" + fmt.Sprintf("%d bytes", len(raw)) + ">"
+	switch {
+	case ok:
+		// 按**原始键顺序**清洗 —— 顺序是契约的一部分（见 docs/contract/README.md）。
+		ob, err := sanitizeOrdered(raw, "")
+		if err != nil {
+			return nil, fmt.Errorf("清洗响应体失败: %w", err)
+		}
+		respView.Body = ob
+	case len(raw) == 0:
+		respView.Body = json.RawMessage("null")
+	default:
+		respView.Body = mustJSON("<raw:non-json:" + fmt.Sprintf("%d bytes", len(raw)) + ">")
 	}
 
 	smp := sample{
@@ -586,15 +597,24 @@ func (s *sampler) hasID(id string) bool {
 
 // encodeSample 以 2 空格缩进输出样本，并关闭 HTML 转义 —— 否则脱敏占位符里的
 // `<` `>` 会被写成 \u003c / \u003e，样本可读性变差。
+//
+// 为什么先紧凑编码再 `json.Indent`，而不是直接用 `Encoder.SetIndent`：
+// 响应体是 `json.RawMessage`（为保住原始键顺序），而 `Encoder` 会把 `RawMessage`
+// 当成不透明字节**紧凑**写出去，缩进就丢了。`json.Indent` 是纯空白格式化，
+// 不重排键、不改写字符串，正好补上缩进。
 func encodeSample(smp sample) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
+	var compact bytes.Buffer
+	enc := json.NewEncoder(&compact)
 	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
 	if err := enc.Encode(smp); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, bytes.TrimRight(compact.Bytes(), "\n"), "", "  "); err != nil {
+		return nil, err
+	}
+	pretty.WriteByte('\n')
+	return pretty.Bytes(), nil
 }
 
 // ── 工具 ───────────────────────────────────────────────────────────────────
@@ -658,37 +678,135 @@ var (
 	reAcctID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}-[0-9a-f]{8}$`)
 )
 
-func sanitize(key string, v any) any {
+// sanitizeStringValue 对「位于 key 之下的字符串」施加脱敏规则。
+//
+// 规则按优先级：敏感键 → 掩码键 → URL 键 → 取值形态（邮箱 / 手机 / UUID / JWT / 32hex）。
+func sanitizeStringValue(key, s string) string {
 	lk := strings.ToLower(key)
-	switch val := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(val))
-		for k, vv := range val {
-			out[k] = sanitize(k, vv)
-		}
-		return out
-	case []any:
-		out := make([]any, 0, len(val))
-		for _, vv := range val {
-			// 键向下传播：`tokens: ["…"]` 这类「敏感键 + 数组」的元素也要脱敏，
-			// 同时保住「这是一个数组」的结构信息。
-			out = append(out, sanitize(key, vv))
-		}
-		return out
-	case string:
-		if sensitiveKeys[lk] {
-			return "<redacted:string>"
-		}
-		if maskedKeys[lk] {
-			return "<redacted:masked>"
-		}
-		if urlKeys[lk] {
-			return "<redacted:url>"
-		}
-		return redactString(val)
-	default:
-		return v
+	if sensitiveKeys[lk] {
+		return "<redacted:string>"
 	}
+	if maskedKeys[lk] {
+		return "<redacted:masked>"
+	}
+	if urlKeys[lk] {
+		return "<redacted:url>"
+	}
+	return redactString(s)
+}
+
+// sanitizeOrdered 按**原始键顺序**清洗 JSON，返回紧凑的 JSON 字节。
+//
+// 为什么不能用 `json.Unmarshal` 到 `map[string]any` 再编码：Go 的 map 无序，
+// `json.Marshal` 会把键**按字典序**输出 —— 样本就不再是「真实响应体」了。
+// 键顺序是可观测契约（A2 已证明：落盘 `data` 与 `/admin/api/accounts` 的键序
+// 都不是字典序，且被逐字节校验）。所以这里走流式 Token，逐个键照原序写回。
+//
+// `key` 是当前所处字段名，用于脱敏判定；数组元素**继承父键**，这样
+// `tokens: ["…"]` 这类「敏感键 + 数组」的元素也会被脱敏，同时保住数组结构。
+func sanitizeOrdered(raw []byte, key string) (json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var buf bytes.Buffer
+	if err := writeSanitized(&buf, dec, key); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(buf.Bytes()), nil
+}
+
+func writeSanitized(buf *bytes.Buffer, dec *json.Decoder, key string) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	switch t := tok.(type) {
+	case json.Delim:
+		switch t {
+		case '{':
+			buf.WriteByte('{')
+			first := true
+			for dec.More() {
+				kt, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				k, ok := kt.(string)
+				if !ok {
+					return fmt.Errorf("对象键不是字符串: %v", kt)
+				}
+				if !first {
+					buf.WriteByte(',')
+				}
+				first = false
+				buf.Write(mustJSON(k))
+				buf.WriteByte(':')
+				if err := writeSanitized(buf, dec, k); err != nil {
+					return err
+				}
+			}
+			end, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if end != json.Delim('}') {
+				return fmt.Errorf("对象未正确闭合: %v", end)
+			}
+			buf.WriteByte('}')
+		case '[':
+			buf.WriteByte('[')
+			first := true
+			for dec.More() {
+				if !first {
+					buf.WriteByte(',')
+				}
+				first = false
+				if err := writeSanitized(buf, dec, key); err != nil { // 键向下传播
+					return err
+				}
+			}
+			end, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			if end != json.Delim(']') {
+				return fmt.Errorf("数组未正确闭合: %v", end)
+			}
+			buf.WriteByte(']')
+		default:
+			return fmt.Errorf("意外的分隔符: %v", t)
+		}
+	case string:
+		buf.Write(mustJSON(sanitizeStringValue(key, t)))
+	case json.Number:
+		// 原样输出，保住整数与高精度小数的字面形态（不经过 float64）。
+		buf.WriteString(t.String())
+	case bool:
+		if t {
+			buf.WriteString("true")
+		} else {
+			buf.WriteString("false")
+		}
+	case nil:
+		buf.WriteString("null")
+	default:
+		return fmt.Errorf("意外的 Token: %v", tok)
+	}
+	return nil
+}
+
+// mustJSON 编码一个 JSON 值，关闭 HTML 转义（否则脱敏占位符里的 < > 会变形）。
+func mustJSON(v any) []byte {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		panic("samplecontract: 无法编码 JSON 字面量: " + err.Error())
+	}
+	b := buf.Bytes()
+	if n := len(b); n > 0 && b[n-1] == '\n' {
+		b = b[:n-1]
+	}
+	return b
 }
 
 func redactString(s string) string {
