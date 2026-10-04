@@ -15,9 +15,13 @@
 
 A3 / A5 边界
 ------------
-需要打上游的分支（JWT 账号额度刷新、领取、OAuth 登录）属 A5/A6，A3 显式报错。
-这类分支**不跳过**：改为断言面板上确实出现了「失败」回执 —— 把「我们还不支持」
-也钉成可观测行为，而不是让测试在它上面含糊地变绿。
+JWT 账号的额度刷新在 **A5 已真实接通**（会打上游 `zcode.z.ai`）。本轮把被测服务的
+出站**显式指向一个没人监听的本地端口**，于是这条链路**确定性地**走到「出站失败」分支：
+后端回 502、面板报「刷新失败」。断言的是「面板 + 后端都不假装成功」——
+**不是**「我们还不支持」（那是 A3 的口径，已被 A5 取代）。
+后端那半边的成败语义（200 + `ok:false` 的 FRESH / CACHED 两形态）由
+`tools/e2e_quota.py` 用 MITM 逐字节断言，与本脚本分工不重叠。
+`claim` / OAuth 登录仍属未接通分支（样本缺失），本脚本不涉及。
 
 上游前端**不进本仓库**（许可纪律）：用 `--panel-dir`（或 `ZCODE_PANEL_DIR`）指过来。
 本机常见位置会被自动探测，探不到就明确报错，不猜。
@@ -275,11 +279,20 @@ def main():
     data_dir = os.path.join(HOME, "data")
 
     logf = open(LOG, "w", encoding="utf-8", errors="replace")
+    # A5 起，JWT 额度刷新会**真的打上游**（zcode.z.ai）。为让第 ⑧ 条断言**确定**、
+    # 不依赖本机能否连 z.ai 或系统代理是否可用，把被测服务的出站显式指向一个
+    # **没人监听的本地端口**：探测必定传输失败 ⇒ 账号留 `active` ⇒ 刷新回 502
+    # ⇒ 面板报「刷新失败」。其余断言（静态出口 / 账号 CRUD / 设置 / 监控）都不出站，
+    # 不受影响。
+    dead_proxy = f"http://127.0.0.1:{free_port()}"
+    srv_env = dict(os.environ)
+    for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"):
+        srv_env[k] = dead_proxy
     srv = subprocess.Popen(
         [exe, "serve", "--host", "127.0.0.1", "--port", str(port),
          "--data-dir", data_dir, "--panel-dir", panel,
          "--admin-key", ADMIN_KEY, "--gateway-key", GATEWAY_KEY],
-        stdout=logf, stderr=subprocess.STDOUT)
+        env=srv_env, stdout=logf, stderr=subprocess.STDOUT)
     edge_proc = None
     ws = None
     try:
@@ -493,15 +506,19 @@ def main():
               js("document.querySelectorAll('#acct-list .acct-row')[%d]"
                  ".classList.contains('is-disabled')" % idx))
 
-        # ── ⑧ A5 接缝：JWT 单账号刷新必须**显式失败**，不能假装成功
+        # ── ⑧ A5 起：JWT 单账号刷新会**真的打上游**，本轮出站被指向死端口
+        #    ⇒ 探测传输失败、账号留 active ⇒ 后端回 502 ⇒ 面板显式报「刷新失败」。
+        #    这里钉的是「面板 + 后端」两端都**不假装成功**：非 2xx ⇒ 面板 api() 抛错
+        #    ⇒ 失败提示。后端的成败语义（200 + ok:false 的 FRESH/CACHED 两形态）
+        #    由 `tools/e2e_quota.py` 用 MITM 逐字节断言，分工不重叠。
         jidx = js("[...document.querySelectorAll('#acct-list .acct-row')]"
                   ".findIndex(r=>r.textContent.includes('JWT'))")
         if jidx is not None and jidx >= 0:
             js("document.querySelectorAll('#acct-list .acct-row')[%d]"
                ".querySelector('button[title=刷新额度]').click()" % jidx)
             t = wait_toast("刷新失败", timeout=25)
-            check("JWT 额度刷新（属 A5）显式失败而非假装成功",
-                  "刷新失败" in t and "尚未实现" in t, t)
+            check("JWT 额度刷新（A5）出站失败时面板显式报「刷新失败」",
+                  "刷新失败" in t and "额度查询失败" in t, t)
         else:
             skip("JWT 额度刷新（A5 接缝）", "未找到 JWT 行")
 

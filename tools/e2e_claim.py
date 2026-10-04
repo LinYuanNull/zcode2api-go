@@ -11,8 +11,14 @@
     加一个 JWT 账号 → 额度探测（mitm 回 404/401/401）把它打成 `invalid`
     → 三条 claim 路由的响应必须与 A5 旁录
     `docs/contract/outbound-admin/fixtures/admin-responses.json` **逐字节一致**
-    （只把旁录里的账号 id/name 换成真实生成的），
-    并且**之后零出站**（观测到的实测事实：claim 只读已存状态）。
+    （只把旁录里的账号 id/name 换成真实生成的）。
+
+    A6 更正两处（本脚本早先的断言据此更新）：
+      ① `claim/captcha-config` 不再是空配置，而是与样本 `15-*` 同值
+         （空 `scene_id` 会让面板的人机验证控件整个不可用）；
+      ② `captcha-config` **会出站** —— 每次拉上游 `GET /api/v1/client/configs`
+         （600s 缓存）。所以「claim 链路零出站」只对 preview / claim / manual 三条
+         成立，`captcha-config` 单列一条出站断言。
 
   沙盒 2（`active` 分支，未采样）
     额度探测让 mitm 回 200 ⇒ `quota` 报「成功体未采样」且**不改账号状态**
@@ -44,6 +50,11 @@ FAKE_JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJlMmUtY2xhaW0ifQ.c2ln"
 QUOTA_PATHS = sorted(["/api/v1/zcode-plan/usage",
                       "/api/v1/zcode-plan/billing/current",
                       "/api/v1/zcode-plan/billing/balance"])
+# captcha-config 的响应体必须与样本 `docs/contract/admin/15-claim-captcha-config.GET.json`
+# 逐字节一致（A6 更正了 A5-4 的空配置：空 scene_id 会让面板控件不可用）。
+CAPTCHA_CONFIG_BODY = '{"enabled":true,"scene_id":"11xygtvd","region":"cn","prefix":"no8xfe"}'
+# captcha-config 会出站拉上游客户配置（A6 实测），路径带 `?app_version=` 查询串。
+CLIENT_CONFIGS_PATH = "/api/v1/client/configs"
 
 results = []
 NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -307,21 +318,29 @@ def main():
               st == 200 and raw.decode() == '{"outcomes":[],"summary":{"ok":0,"fail":0}}',
               f"{st} {raw[:160]}")
 
-        # captcha-config：诚实降级（未接 A6 ⇒ 空配置），不是 501 也不是假参数
+        # captcha-config：A6 更正 —— 返回样本同值的配置，不是空配置。
+        # ★ 这条路由**会出站**（拉上游 client/configs，600s 缓存），见下方计数断言。
         st, raw = api("GET", base1, "/admin/api/claim/captcha-config")
         cfg = jbody(raw) or {}
         check("claim/captcha-config 键序为样本的 enabled,scene_id,region,prefix",
               st == 200 and list(cfg.keys()) == ["enabled", "scene_id", "region", "prefix"],
               f"{st} {raw[:160]}")
-        check("未接 A6 时 captcha-config 是空配置（enabled=false）",
-              cfg.get("enabled") is False, raw[:160])
+        check("captcha-config 与样本 15-* 逐字节一致（A6 更正：非空配置）",
+              st == 200 and raw.decode().strip() == CAPTCHA_CONFIG_BODY,
+              raw[:160])
 
-        # ★ 本轮最核心的实测事实：claim 三条链路**零出站**。
+        # ★ claim 的 preview / claim / manual 三条**零出站**（只读已存状态）；
+        #   但 captcha-config 会拉一条上游 client/configs（A6 实测更正）。
         time.sleep(0.5)
         reqs, conns = recorded_requests(log1)
-        check("claim 链路零出站（只读已存状态）", len(reqs) == baseline,
-              f"探测后 {baseline} 条，claim 之后 {len(reqs)} 条："
-              f"{[r.get('path') for r in reqs[baseline:]]}")
+        after = [r.get("path") for r in reqs[baseline:]]
+        check("claim/preview + claim + claim/manual 零出站（只读已存状态）",
+              len(reqs) == baseline + 1 and len(after) == 1
+              and after[0].startswith(CLIENT_CONFIGS_PATH),
+              f"探测后 {baseline} 条，claim 之后 {len(reqs)} 条：{after}")
+        check("captcha-config 的那条出站落在 /api/v1/client/configs",
+              bool(after) and after[0].startswith(CLIENT_CONFIGS_PATH),
+              str(after))
 
         # ── `claim` 子命令：同一个数据目录，直接跑 CLI ─────────
         # 先放掉库文件再跑（Windows 上 SQLite 的文件锁比较硬）。

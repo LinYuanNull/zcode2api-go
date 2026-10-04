@@ -14,6 +14,9 @@ OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 
 
 ## 状态
 
+**v0.1.0 已发布** —— 版本说明见 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)，
+二进制见 [Releases](https://github.com/LinYuanNull/zcode2api-go/releases)。
+
 **A4 —— 转发链路**：`/v1/messages` 与 `/v1/chat/completions` 的完整链路已就位。
 `/v1/messages` 保序改写出站 + 逐字节透传响应（含 SSE 逐帧 flush）；`/v1/chat/completions`
 白名单重建出站 + 解析上游响应转成 OpenAI 形状（JSON / SSE）。调度器按「逐个账号试到成功」
@@ -60,7 +63,25 @@ OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 
 | A4 | 转发链路（调度器 / body 变换 / SSE / 错误分类） | ✅ |
 | A5 | 额度、领取、登录 | ✅ 登录 ✅ · 额度 ✅ · 领取 ✅（均限已采样分支） |
 | A6 | 验证码（Go 自写 CDP 客户端 + 求解器 + 自检命令） | ✅（自动领取未接通） |
-| A7 | 发布 v0.1.0 | ⬜ |
+| A7 | 发布 v0.1.0 | ✅ |
+
+## 下载
+
+从 [Releases](https://github.com/LinYuanNull/zcode2api-go/releases) 取单文件可执行程序
+（**不含 Chromium** —— 验证码求解复用系统已装的 Edge / Chrome）：
+
+| 资产 | 说明 |
+|---|---|
+| `zcode2api-go-windows-amd64.exe` | Windows x64，无控制台窗口 |
+| `zcode2api-go-linux-amd64` | Linux x64 |
+| `checksums.txt` | 上面两者的 SHA256 |
+
+```bash
+# Windows
+zcode2api-go-windows-amd64.exe serve
+# Linux
+chmod +x zcode2api-go-linux-amd64 && ./zcode2api-go-linux-amd64 serve
+```
 
 ## 快速开始
 
@@ -109,7 +130,9 @@ zcode2api-go/
 │  ├─ server/ appdir/ buildinfo/                 服务器装配、运行根解析、构建信息
 │  └─ captcha/                                   验证码配置 + 求解器（用时现解）
 │     └─ cdp/                                    自写极简 CDP 客户端（WebSocket + JSON-RPC）
-├─ docs/contract/             契约样本（只保留结构，见 PROVENANCE.md）
+├─ docs/
+│  ├─ contract/               契约样本（只保留结构，见 PROVENANCE.md）
+│  └─ CHANGELOG.md            版本说明（Release notes 的单一真源）
 ├─ tools/                     开发工具（都不随发布产物分发）
 │  ├─ samplecontract/         契约采样器
 │  ├─ samplefixture/          落盘契约夹具生成器

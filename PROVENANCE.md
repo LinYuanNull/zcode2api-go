@@ -522,6 +522,42 @@ A4 采样时账号池为空，因此下列分支当时**未能采到**，实现�
   平台一致性；随机量本就不可能逐字节复现，验收只要求「读取既有账号逐字段一致」。
 - **`name` 全为标点 / 空白时的 slug 结果**：未采样。Go 侧退到 provider 以保证 id 合法。
 
+## 发布记录（A7）
+
+| 项 | 值 |
+|---|---|
+| 版本 / tag | `v0.1.0` |
+| 日期 | 2026-10-04 |
+| 远端 | `LinYuanNull/zcode2api-go`（MIT / public / `main`）|
+| Release 说明来源 | `docs/CHANGELOG.md` 的 `## [0.1.0]` 节（单一真源）|
+| 资产 | `zcode2api-go-windows-amd64.exe` · `zcode2api-go-linux-amd64` · `zcode2api-go-0.1.0-src.zip` · `checksums.txt` |
+| 校验 | 各资产 SHA256 见 Release 的 `checksums.txt`（上传后**下载回来重算比对**）|
+
+- **构建方式可复现**：资产由 `tools/build_release.py --version v0.1.0` 产出 ——
+  `CGO_ENABLED=0`、`-trimpath`、`-ldflags "-s -w -X …/internal/buildinfo.Version=0.1.0"`
+  （Windows 另加 `-H windowsgui`，否则会多一个控制台窗口）。源码 zip 走 `git archive HEAD`，
+  只含**已提交**内容且按 `.gitattributes` 的 `eol=lf` 导出。
+- **不含 Chromium**：资产里只有两个可执行程序与源码 zip，脚本自带自检（zip 内不得出现
+  `.exe` / `.dll` / `.so` / `.dylib`）。无痕验证复用**系统已装**的 Edge / Chrome。
+- **推送链路**：本机 `git push` / `git fetch` 不通，分支与 tag 一律走 GitHub Git Data API
+  （工具在仓库外 `_pubtools/gitpush.py` / `ghrelease.py`）。
+
+### 验收（A7，全部来自真实运行）
+
+1. **本地全量回归**：`gofmt -l .` 干净、`go vet ./...` 通过、`go test ./...` 全绿；
+   四个真实二进制端到端脚本：管理面面板 **38/38**、额度链路 **31/31**、领取链路 **35/35**、
+   验证码 **17/17**；契约键序守护 `tools/spec_reorder.py --check` 通过。
+2. **回验**：从 Release 下载三个资产，重算 SHA256 与 `checksums.txt` **逐字节一致**。
+3. **全新目录冷启动**：在**空目录**里只放下载来的 exe，直接 `serve` ⇒ 服务起来、
+   `/meta` 可读、面板页可达、管理面可登录 —— 不依赖仓库里的任何文件（数据目录自动创建）。
+
+### A7 未覆盖（不凭猜测补全）
+
+计划里「全新机器上 …**登录账号 → 领取成功**」这两步**本轮走不通**，原因与实现无关：
+① **没有真实 ZCode 账号**可完成 OAuth 授权；② **上游端点表里没有领取端点**
+（出站样本缺失，见「A6 未覆盖」）。因此验收只做到「下载 → serve → 面板可用 → 可登录管理面」，
+后两步按同一纪律**如实标注为未覆盖**，不伪造。
+
 ## 与上游的关系
 
 - 本仓库是**独立实现**，不是 fork、不是分支、不是移植。
