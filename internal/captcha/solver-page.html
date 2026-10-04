@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="no-referrer">
+<title>captcha</title>
+</head>
+<body>
+<!--
+  求解页。三样东西是阿里云无痕验证 SDK 的**硬性输入**，不能改名：
+    1. 官方 SDK 脚本（远程加载，浏览器必须能直连 alicdn）
+    2. #cap-holder —— initAliyunCaptcha 的挂载点
+    3. #cap-btn    —— 兜底按钮位置（无痕模式自动通过，正常不会点到它）
+
+  meta referrer=no-referrer：SDK 会往上游发请求，不带 referrer 更接近
+  官方客户端的形态（该页是 file:// 打开的，带 referrer 只会暴露本地路径）。
+-->
+<div id="cap-holder"></div>
+<button id="cap-btn">verify</button>
+<script src="https://o.alicdn.com/captcha-frontend/aliyunCaptcha/AliyunCaptcha.js"></script>
+</body>
+</html>

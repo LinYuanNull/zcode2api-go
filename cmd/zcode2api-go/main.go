@@ -5,17 +5,20 @@
 //	serve          启动网关与管理面板（默认，等价于不带子命令）
 //	login          账号登录（OAuth 设备码流程）
 //	claim          立即执行一次套餐领取
+//	captcha        验证码自检 / 试解一次
 //	set-admin-key  设置管理面板密码
 //	version        打印版本
 //	help           显示帮助
 //
 // 分期方案见 ModelMux 仓库的 docs/zcode-native-port-plan.md。
 // 当前进度：A0 骨架 ✅ / A1 契约固化 ✅ / A2 账号池与存储 ✅ / A3 管理 API ✅ /
-// A4 转发链路 ✅ / A5 登录与额度 ✅、领取 ✅（仅已采样分支）；A6 验证码、A7 发版待做。
+// A4 转发链路 ✅ / A5 登录与额度 ✅、领取 ✅（仅已采样分支）；
+// A6 验证码 ✅（配置 + 求解器 + 自检命令，自动领取仍未接通）、A7 发版待做。
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,8 +31,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/LinYuanNull/zcode2api-go/internal/agent"
 	"github.com/LinYuanNull/zcode2api-go/internal/appdir"
 	"github.com/LinYuanNull/zcode2api-go/internal/buildinfo"
+	"github.com/LinYuanNull/zcode2api-go/internal/captcha"
 	"github.com/LinYuanNull/zcode2api-go/internal/claim"
 	"github.com/LinYuanNull/zcode2api-go/internal/constants"
 	"github.com/LinYuanNull/zcode2api-go/internal/gateway"
@@ -47,6 +52,7 @@ const usage = `zcode2api-go —— ZCode 网关（独立纯 Go 实现）
   serve           启动网关与管理面板（默认）
   login           账号登录（OAuth 设备码流程）
   claim           立即执行一次套餐领取
+  captcha         验证码自检 / 试解一次
   set-admin-key   设置管理面板密码
   version         打印版本
   help            显示本帮助
@@ -70,6 +76,14 @@ serve 的参数（带 $ 的项可用环境变量给默认值；上游 serve 没�
 
   以上四项（admin_key / 三个整数）都是**首启默认值**：库里有值就以库为准。
 
+captcha 的用法（自检 / 试解一次）:
+  zcode2api-go captcha [--solve] [--json] [--offline] [--browser 路径] [--timeout 120s]
+
+  不带 --solve 时只打印「用什么浏览器」与「当前配置」，用于排查部署问题。
+  带 --solve 时真起一次浏览器求解并打印凭据：需要系统里装了 Edge 或 Chrome，
+  且这一步会联网到 o.alicdn.com 加载阿里云验证码 SDK。
+  --offline 跳过拉取上游公开目录，只用静态默认配置（断网排查用）。
+
 set-admin-key 的用法:
   zcode2api-go set-admin-key <新密码> [--data-dir 目录]
 `
@@ -89,6 +103,8 @@ func main() {
 		err = runLogin(args)
 	case "claim":
 		err = runClaim(args)
+	case "captcha":
+		err = runCaptcha(args)
 	case "set-admin-key":
 		err = runSetAdminKey(args)
 	case "version", "-v", "--version":
@@ -249,7 +265,106 @@ func runSetAdminKey(args []string) error {
 	return nil
 }
 
-// ── 尚未实现的子命令（A6）───────────────────────────────────
+// ── captcha ─────────────────────────────────────────────────
+
+// runCaptcha 是验证码链路的自检命令（A6）。
+//
+// 两种用途，都对应实际会踩的坑：
+//
+//   - **只自检**（不带 `--solve`）：打印求解器会用的浏览器路径与当前 SDK 配置。
+//     「验证码解不出来」十有八九是这两个之一 —— 机器上没装 Edge/Chrome，
+//     或者 `$ZCODE_CHROMIUM_PATH` 指错了地方。
+//   - **试解一次**（`--solve`）：真起浏览器跑一遍，打印产出的凭据。
+//     这是 A6 的真机验收入口；也是「配置对不对、SDK 能不能加载」的最终判据。
+//
+// 刻意把 `Retries` 设成 1（默认 4）：手工排查时你要的是**立刻看到失败原因**
+// （错误里带浏览器 stderr 尾部），而不是等四轮超时。要多试几次就多跑几次。
+func runCaptcha(args []string) error {
+	fs := newFlagSet("captcha")
+	var (
+		solve   = fs.Bool("solve", false, "真的解一次并打印凭据")
+		asJSON  = fs.Bool("json", false, "以 JSON 输出")
+		offline = fs.Bool("offline", false, "跳过拉取上游配置，只用静态默认值")
+		browser = fs.String("browser", "", "覆盖浏览器路径（$ZCODE_CHROMIUM_PATH）")
+		timeout = fs.Duration("timeout", 0, "单次求解超时（默认 120s）")
+	)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	logf := func(format string, args ...any) {
+		fmt.Fprintf(os.Stderr, "captcha: "+format+"\n", args...)
+	}
+
+	// Source 为 nil 时 Manager 直接用 captcha.Default（不发任何出站）。
+	var src captcha.ConfigSource
+	if !*offline {
+		src = agent.New()
+	}
+	mgr := captcha.NewManager(captcha.Options{
+		Source:  src,
+		Solver:  captcha.NewCDPSolver(captcha.SolveOptions{Executable: *browser, Timeout: *timeout, Logf: logf}),
+		Retries: 1,
+		Logf:    logf,
+	})
+
+	cfg := mgr.Config()
+
+	rep := captchaReport{Browser: mgr.Browser(), Config: cfg}
+	if *solve {
+		param, err := mgr.Acquire(context.Background())
+		if err != nil {
+			rep.Error = err.Error()
+		} else {
+			rep.Param = param
+		}
+	}
+
+	if *asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(rep); err != nil {
+			return err
+		}
+	} else {
+		rep.print()
+	}
+
+	if rep.Error != "" {
+		return errors.New("验证码求解失败: " + rep.Error)
+	}
+	return nil
+}
+
+// captchaReport 是 `captcha` 命令的输出形状：既可人读也可机读（`--json` 给
+// 验收脚本用）。键顺序固定，方便脚本 `jq`。
+type captchaReport struct {
+	Browser string         `json:"browser"`
+	Config  captcha.Config `json:"config"`
+	Param   string         `json:"captcha_verify_param,omitempty"`
+	Error   string         `json:"error,omitempty"`
+}
+
+// print 以人读形式打印自检结果。
+func (r captchaReport) print() {
+	exe := r.Browser
+	if exe == "" {
+		exe = "（没找到，可设 $ZCODE_CHROMIUM_PATH 指定）"
+	}
+	fmt.Printf("验证码自检\n  浏览器    %s\n", exe)
+	fmt.Printf("  SDK 配置  enabled=%t scene_id=%s region=%s prefix=%s\n",
+		r.Config.Enabled, r.Config.SceneID, r.Config.Region, r.Config.Prefix)
+	switch {
+	case r.Error != "":
+		fmt.Printf("  求解      ✗ %s\n", r.Error)
+	case r.Param != "":
+		fmt.Printf("  求解      ✓ 凭据 %d 字符\n            %s\n", len(r.Param), r.Param)
+	default:
+		fmt.Println("  求解      （未执行；加 --solve 试解一次）")
+	}
+}
+
+// ── 尚未实现的子命令 ────────────────────────────────────────
 
 // runLogin 尚未接通。OAuth 服务层（`internal/oauth`）与两条管理 API 已可用，
 // 面板登录就是走它们；缺的是 **`ready` 之后把凭据落库成账号** 这一步 ——

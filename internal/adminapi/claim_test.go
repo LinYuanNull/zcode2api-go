@@ -330,8 +330,13 @@ func TestClaimAcceptsEmptyBody(t *testing.T) {
 	}
 }
 
-// captcha-config 在未接 A6 时返回**诚实的空配置**，不是 501 也不是假参数。
-func TestCaptchaConfigIsHonestEmptyConfig(t *testing.T) {
+// 未注入 Provider 时，captcha-config 回落到**样本同值的静态默认配置**。
+//
+// 依据 `15-claim-captcha-config.GET.json`：靶机记的就是
+// `{"enabled":true,"scene_id":"11xygtvd","region":"cn","prefix":"no8xfe"}`，
+// 这四个值也是上游拉不到动态配置时的静态默认值（`outbound/fixtures/client-configs.json`）。
+// 早期实现返回空配置，形状与样本不符，已更正。
+func TestCaptchaConfigFallsBackToSampleValues(t *testing.T) {
 	st := storeWithAccount(t, invalidAcc())
 	api := New(Deps{Store: st})
 
@@ -339,7 +344,7 @@ func TestCaptchaConfigIsHonestEmptyConfig(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("status = %d\n%s", status, body)
 	}
-	want := `{"enabled":false,"scene_id":"","region":"","prefix":""}`
+	want := `{"enabled":true,"scene_id":"11xygtvd","region":"cn","prefix":"no8xfe"}`
 	if body != want {
 		t.Errorf("响应不符:\n got %s\nwant %s", body, want)
 	}

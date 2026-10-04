@@ -329,7 +329,7 @@ UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbo
 | **凭据失效**（`status=invalid`）的 preview 行 | 旁录 `claim/preview` 逐字节：`plans:[]`、`error`、`activated:false`、**`activation_error:null`** | 实现 |
 | 同上，`claim` 与 `claim/manual` 的回执 | 旁录两条 `body_text` **逐字相同**；`summary` 由回执逐条数出 | 实现 |
 | `claim/manual` 缺 `account_id` → 400；非 JWT / 不存在 → 404 | `16-claim-manual-{missing-id,404}` | 实现（在调用领取器**之前**判） |
-| `claim/captcha-config` | `15-*`：`{enabled, scene_id, region, prefix}` | 实现为**诚实降级**的空配置（未接 A6 时 `enabled:false` + 空串） |
+| `claim/captcha-config` | `15-*`：`{enabled, scene_id, region, prefix}` | A5-4 曾实现为**空配置**，与样本不符；**A6 已更正**为样本同值的默认配置（见「验证码实现依据（A6）」） |
 | **`status=active` 的真实领取** | **无样本**（下节第 4 条） | **显式报错（501）** |
 
 三条实施要点（都是「看起来能省、省了就错」的地方）：
@@ -382,7 +382,110 @@ UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbo
 - **`login` 子命令**：管理面板的登录链路已通（`/admin/api/login/start` + `poll`），
   但 `zcode2api-go login` 这个 CLI 子命令未接通 —— 缺的是第 1 条（`ready` 之后凭据落库），
   它未采样，所以 CLI 不假装能完成登录。
-- **`internal/captcha`**：仍是占位实现（`captcha-config` 返回空配置），求解器属 A6。
+- **自动领取**：验证码求解器本身已可用（A6，见下节），但「解出来的凭据往哪发」仍未采样
+  —— 领取端点不在出站端点表里（`observations.md` 一之表只有 5 个），所以
+  `POST /admin/api/claim` 的成功路径继续显式报错（501）。
+
+## 验证码实现依据（A6）
+
+两条链路，依据不同：**配置**有样本，**求解**没有样本（上游那套是 Node/Playwright，
+本实现是独立重写），所以求解侧的契约只有一条：**必须产出 SDK 成功回调里的
+`captchaVerifyParam`**，并由真机验收证明（`tools/e2e_captcha.py` 第 2 组）。
+
+### 配置：从哪来、以及 A5-4 的一处更正
+
+`GET /admin/api/claim/captcha-config` 的响应体有样本：`15-claim-captcha-config.GET.json`
+记的是 `{"enabled":true,"scene_id":"11xygtvd","region":"cn","prefix":"no8xfe"}`。
+这四个值同时是**上游公开目录**里 `data.configs.captcha` 的取值
+（`outbound/01-client-configs.GET.json` + `fixtures/client-configs.json`，那份是 23,313 B 的全文）：
+
+```
+{"enabled":true,"prefix":"no8xfe","region":"cn","sceneId":"11xygtvd","skip_model_request":true}
+```
+
+两处**同源**：管理面把 `sceneId` 改名成 `scene_id`，并丢掉 `skip_model_request`。
+
+⚠️ **A5-4 实现错了、A6 更正**：当时返回的是「诚实的空配置」
+`{"enabled":false,"scene_id":"","region":"","prefix":""}`。理由是「不知道当前值就别假装知道」，
+但判据不是这么定的 —— 样本里白纸黑字是非空值，而**空 `scene_id` 会让面板侧的人机验证控件
+整个不可用**，比「拿不到当前值」更糟。A6 起改为：拉不到动态配置就回落**静态默认值**
+（`captcha.Default`，与样本同值），因此「拉到了」与「拉不到」在当前环境里产出同一个响应体。
+`internal/adminapi/api.go` 的缺项默认值与 `internal/captcha/config.go` 的 `Default` 是同一组取值。
+
+一处**有意偏离**：配置拉取**失败也落缓存**（60s，成功缓存是 600s）。上游失败不缓存 ⇒ 断网时
+每次请求都卡满 15s 的上游超时；这里把「配置恢复」的可见延迟上界从 0 放宽到 60s，响应体不变。
+
+### 求解：7 条 CDP 命令
+
+`internal/captcha/cdp` 是一个**手写的极简 CDP 客户端**（Go 标准库没有 WebSocket 客户端，
+而项目铁律禁止引入重量级依赖）。求解链路只用 7 条命令：
+
+```
+Target.createTarget                    开一个 about:blank 目标
+Target.attachToTarget                  取 sessionId（flatten=true，命令随消息带 sessionId）
+Page.addScriptToEvaluateOnNewDocument  反探测补丁（必须早于导航）
+Emulation.setUserAgentOverride         改 UA（必须早于导航）
+Page.navigate                          打开本地求解页（file://，不是 data:）
+Runtime.evaluate                       awaitPromise 执行求解表达式
+Target.closeTarget                     收尾
+```
+
+计划文档写的是「6 条」，**漏了 `Target.attachToTarget`**：没有它，页面级命令无法投递到新目标上。
+本实现**刻意不用** `Page.enable`（靠轮询 `document.readyState` 判就绪，少一条命令少一处失败点），
+也**刻意不用** `--remote-debugging-pipe`（fd 3/4 的 NUL 分隔协议，跨平台拉子进程拿 fd 很别扭）。
+
+### 与上游的两处结构性差异（都是刻意的）
+
+1. **没有预解池**。上游后台维护 `POOL_MIN=1` / `POOL_MAX=2` 的池，代价是**常驻求解进程**
+   ——真浏览器解一次要 10–40s，池得在请求到来前就备好货。本实现「**用时现解**」：领取频率
+   是每天一次（上游自己的 `claim_round_interval` 默认 3600s，而套餐是每日限领），
+   为一天一两次求解常驻几百 MB 浏览器不划算；计划文档也明确允许这么做。
+   由此产生三处**已登记为未实现**（不是遗漏）：预解池本身、token TTL（`CAPTCHA_TOKEN_TTL=95s`
+   ——TTL 只对「池里躺着待用的 token」有意义）、`invalidate()`（无池可清）。
+2. **只用系统已装的浏览器**（`$ZCODE_CHROMIUM_PATH` → Edge → Chrome）。铁律禁止随包分发
+   第三方二进制；而无痕验证的判定目标就是「是不是真浏览器」，不存在「又小又能过验证」的内核。
+   环境变量名**与上游一致**，因为运维已经会写那个名字。
+
+Windows 上启动参数**不能照抄上游**：那边是 `--single-process --no-zygote
+--renderer-process-limit=1` + oom 看门狗的 **Linux 小内存容器专用**配置，在桌面机上不仅无益，
+`--single-process` 还会让渲染进程与浏览器进程合一，反而更容易被风控识别。这里只保留跨平台有意义的部分。
+
+### 一处只有真实浏览器才能给出的依据（探针结论）
+
+`Emulation.UserAgentMetadata` 里有**五项是必需的**：`platform` / `platformVersion` /
+`architecture` / `model` / `mobile`（判据是浏览器自己吐的 `/json/protocol`，它们没有 `optional` 标记）。
+只要给其中任何一个加上 `omitempty`，零值就会被序列化时省掉，整条命令回
+`-32602 Invalid parameters`，而且**错误信息不说是哪个字段缺了**。
+
+真机踩过一次，罪魁是 `model`：桌面 Chrome/Edge 的 model 本来就是空串，看着「没有值」，
+但必须显式发 `"model":""`。定位过程见 `internal/captcha/live_test.go` 的
+`TestLiveUAOverrideProbe`（用**一个**浏览器会话穷举 5 种参数形状，逐条打印通过与否），
+结论钉在 `cdp.UserAgentMetadata` 的字段注释与 `TestUAOverrideAlwaysSendsRequiredMetadataFields` 里。
+
+求解 UA 也刻意**不用真实浏览器版本**：用的是 Chrome/127 的 Windows x64 UA，与账号档案
+（`win32-x64`）以及 billing/claim 链路的指纹头处处一致。无痕验证看的是「这次会话的各项信号
+是否自洽」，一个自称 Edge 154 的 UA 配一套声称 win32-x64 的接口头，比「版本略旧但处处一致」
+更容易被标记。反探测补丁（`antiDetectJS`）**只改三项**（`navigator.webdriver` /
+`languages` / `platform`），改得越多越容易自相矛盾。
+
+### 验收（全部来自真实运行）
+
+| 验收项 | 结果 |
+|---|---|
+| **真机求解**（系统 Edge 154 + 真出网到 `o.alicdn.com`） | 产出 **280 字符**凭据；base64 解开是 `{"certifyId":…,"sceneId":"11xygtvd","isSign":true,"securityToken":…}`，`sceneId` 与配置一致 |
+| 连续 3 次求解 | **3/3** 成功，单次约 11s |
+| 协议探针（`TestLiveUAOverrideProbe`） | 5 种参数形状：2 种「不碰元数据」通过、3 种「带元数据」——**修正必需项后全部通过** |
+| **A6 真实二进制端到端**（`tools/e2e_captcha.py`） | **17/17**：自检（浏览器探测 + 配置逐字段等于样本）、真解一次（凭据可解且 `sceneId` 一致）、面板回执（**与样本 `15-*` 逐字节一致**、无凭证 401、`Content-Type` 正确） |
+| 单测（`internal/captcha` 34 例 + `internal/captcha/cdp` 19 例） | 全绿（**离线**：不起浏览器、不出网；真机两例默认跳过，`ZCODE_CAPTCHA_LIVE=1` / `ZCODE_CAPTCHA_PROBE=1` 打开） |
+| 契约回放 | 全绿（`15-*` 的分歧已消除，改为普通逐字节断言） |
+| `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
+
+### A6 未覆盖（不凭猜测补全）
+
+**自动领取的成功路径**：验证码求解已能产出凭据，但「凭据往哪发」**没有出站样本**
+——`observations.md` 一之表的 5 个端点里不含领取端点（补采这一点需要真实账号先走完 OAuth）。
+因此 `POST /admin/api/claim` 的成功路径继续显式报错（501），而不是拿一个「猜测的领取端点」去试。
+预解池 / token TTL / `invalidate()` 三处按上文登记为未实现。
 
 ## 附：仍待补采的未覆盖分支（A2 / A4）
 
@@ -402,6 +505,8 @@ A4 采样时账号池为空，因此下列分支当时**未能采到**，实现�
   与 `failed` 分支的 `message` 文案。（**额度与领取两条仍未覆盖**；OAuth 的发起/轮询与
   凭据失效分支已在 A5 补齐，见上一节。）
 - **验证码**：`/admin/api/claim/manual` 在拿到浏览器端 `verify_param` 后的成功分支。
+  （求解器已在 A6 落地并能真机产出凭据，缺的仍是**领取端点的出站样本** —— 见
+  「A6 未覆盖」最后一节。）
 
 ### 落盘契约（A2）未覆盖的分支
 

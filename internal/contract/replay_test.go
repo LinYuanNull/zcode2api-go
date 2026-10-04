@@ -16,8 +16,11 @@
 //     的叶子路径。
 //  3. **`divergence` 已知分歧**：需要上游调用的分支在 A3 显式报错，与样本的成功
 //     响应必然不同。这类**不跳过** —— 改为精确断言我们自己返回的状态码与响应体
-//     前缀，把「分歧」也钉成契约。① OAuth 发起的分歧已在 A5-2 消除（见 steps 里
-//     `11-login-start` 的说明）；只余 ② 验证码配置（属 A6）。
+//     前缀，把「分歧」也钉成契约。
+//     ① OAuth 发起的分歧已在 A5-2 消除（见 steps 里 `11-login-start` 的说明）；
+//     ② 验证码配置的分歧已在 A6 消除（见 steps 里 `15-claim-captcha-config` 的
+//     说明）。**目前没有步骤使用 `divergence`** —— 保留这条通道是为了下一次
+//     出现「需要上游而当前不可达」的分支时有地方登记，而不是临时放宽比对。
 //
 // 空池依赖：全部网关样本都要求「账号池无可用账号」（否则会走转发链路，属 A4）。
 // 本测试的步骤顺序天然满足 —— 唯一的可用账号在 `05-accounts-delete-ok` 被删掉，
@@ -47,6 +50,7 @@ import (
 	"testing"
 
 	"github.com/LinYuanNull/zcode2api-go/internal/agent"
+	"github.com/LinYuanNull/zcode2api-go/internal/captcha"
 	"github.com/LinYuanNull/zcode2api-go/internal/constants"
 	"github.com/LinYuanNull/zcode2api-go/internal/oauth"
 	"github.com/LinYuanNull/zcode2api-go/internal/server"
@@ -211,13 +215,20 @@ var steps = []step{
 	{file: "admin/13-claim-preview-empty.GET.json", bearer: bearerAdmin},
 	{file: "admin/14-claim-empty.POST.json", bearer: bearerAdmin, body: `{}`},
 
-	// ── 已知分歧 ②：验证码配置来自上游验证码服务（A6）────────
-	// 样本采到的是上游当时下发的真实 scene_id / prefix；A3 的 Provider 是
-	// `captcha.Unavailable`，返回同形的空配置（键序一致，取值全空）。
-	{file: "admin/15-claim-captcha-config.GET.json", bearer: bearerAdmin,
-		divergence: "验证码配置来自上游验证码服务（A6）：A3 返回同形空配置",
-		wantStatus: http.StatusOK,
-		wantBody:   `{"enabled":false,"scene_id":"","region":"","prefix":""}`},
+	// 验证码配置**逐字节同形**（A6 修正）。
+	//
+	// A3/A5-4 时期这里是一条「已知分歧」：当时 Provider 是 `captcha.Unavailable`，
+	// 返回同形空配置，与样本不符。A6 复核样本时发现 `15-*` 记的就是
+	// `{"enabled":true,"scene_id":"11xygtvd","region":"cn","prefix":"no8xfe"}`
+	// —— 这四个值正是上游 `client/configs` 里 `data.configs.captcha` 的取值
+	// （同一份样本集，见 `outbound/fixtures/client-configs.json`），也是上游
+	// 拉不到动态配置时的静态默认值。于是空配置被改为「默认值 + 实时拉取」，
+	// 这条分歧随之消失。
+	//
+	// 回放里注入 `Static` 而不是用真实的 `Manager`：真实 Manager 会去拉上游
+	// `client/configs`（15s 超时），在 CI 上既慢又不确定 —— 取值来源与
+	// 「handler 是否与样本同形」是两件事，前者由网络决定，后者是本测试的对象。
+	{file: "admin/15-claim-captcha-config.GET.json", bearer: bearerAdmin},
 
 	{file: "admin/16-claim-manual-missing-id.POST.json", bearer: bearerAdmin,
 		body: `{"captcha_verify_param":"x"}`},
@@ -328,6 +339,9 @@ func TestA3SampleReplay(t *testing.T) {
 		Configured: sampledConfig,
 		// 登录链路换成假上游（真实 Service + 固定 flow）——见 a5Upstream。
 		Sessions: oauth.NewService(oauth.NewRegistry(), a5Upstream{}),
+		// 验证码配置固定成样本同值的默认值：真实 Manager 会去拉上游
+		// `client/configs`，在 CI 上既慢又不确定（见 `15-*` 那一条的说明）。
+		Captcha: captcha.Static{C: captcha.Default},
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -409,7 +423,8 @@ func TestA3SampleReplay(t *testing.T) {
 //
 // 为什么要单开一个测试：`steps` 的采样顺序里 `20-import-ok` 往池里放了一条 active
 // 账号，所以那两条 `*-noaccount` 样本在**靶机上**命中的是「调度器尝试该账号 → 401 →
-// 耗尽」的分支（见 steps 里 divergence ③ 的实测记录），需要 A4 才能复现。
+// 耗尽」的分支（采样顺序与由此产生的分支差异见
+// `docs/contract/outbound/observations.md`），需要 A4 才能复现。
 // 而「空池」分支是 A3 真正实现的那条 —— 它必须与样本**逐字节同形**，
 // 否则一旦 A4 落地，两种输入会给出两种不同的错误体。
 //

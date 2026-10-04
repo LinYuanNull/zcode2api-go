@@ -16,6 +16,7 @@
 | `https://zcode.z.ai/api/v1/zcode-plan/usage` | GET | 额度（用量）查询 | `active` JWT 账号的 **新增 / 启动 / refresh** |
 | `https://zcode.z.ai/api/v1/zcode-plan/billing/current` | GET | 当前账期 | 同上（与 usage 同批并发） |
 | `https://zcode.z.ai/api/v1/zcode-plan/billing/balance` | GET | 余额 | 同上（与 usage 同批并发） |
+| `https://zcode.z.ai/api/v1/client/configs?app_version=<ver>` | GET | 阿里验证码 SDK 初始化参数 | `GET /admin/api/claim/captcha-config`（**A6 采样**；A4 已采过同一端点的完整响应，样本 `../outbound/01-client-configs.GET.json`） |
 
 出站地址**硬编码**（A4 已实测 10 个候选环境变量都不生效），与 A4 的路由同一个 host。
 
@@ -196,16 +197,25 @@ X-Request-Id, X-Title: Z Code@electron, X-Zcode-App-Version: 3.14.4
 > **判据是键名**：真查上游走 `result`（嵌套对象）；命中缓存走 `message`（顶层字符串）。
 > 两者的 `account.status` 都是 `invalid`，**不能只看状态判别是否出站**。
 
-## 五、claim 链路**不出站**
+## 五、claim 链路：三条**不出站**，`captcha-config` **要出站**
 
 实测 `claim/preview`、`claim`、`claim/manual` **三条全部零出站**（只读已存状态）。
 `claim/manual` 的请求体形状为 `{"account_id":"<id>","captcha_verify_param":"<str>"}`。
 
-`GET /admin/api/claim/captcha-config` 同样**零出站**，返回本地配置：
+⚠️ **A6 更正**：`GET /admin/api/claim/captcha-config` **不是零出站**。
+A5 曾记「同样零出站，返回本地配置」——那是**未经采样的推断**（A5 的 MITM 只覆盖了三条
+claim 路由），本轮查上游实现后否定：该路由每次都经 `captcha_manager.fetch_config()`
+去拉 `GET {origin}/api/v1/client/configs?app_version=<ver>`（即上表第 6 条），
+带 600s 缓存；**拉失败**时才回落静态默认值。响应体：
 
 ```json
 {"enabled":true,"scene_id":"11xygtvd","region":"cn","prefix":"no8xfe"}
 ```
+
+四个字段就是公开目录里 `data.configs.captcha` 的那四项（`sceneId` 改名 `scene_id`，
+丢掉 `skip_model_request`），而默认值与它**同值** —— 所以「拉到」与「拉不到」在当前
+环境里产出同一个响应体。上游默认值常量是
+`CAPTCHA_DEFAULTS = {"enabled": True, "prefix": "no8xfe", "region": "cn", "sceneId": "11xygtvd"}`。
 
 它们对「凭证失效」账号的响应形状（入站旁录，见 `fixtures/admin-responses.json`）：
 

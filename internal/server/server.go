@@ -22,7 +22,9 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 
 	"github.com/LinYuanNull/zcode2api-go/internal/adminapi"
 	"github.com/LinYuanNull/zcode2api-go/internal/agent"
@@ -88,7 +90,11 @@ type Config struct {
 	// 失效账号产出旁录样本那一行 / 那一条（零出站）；成功路径未采样 ⇒ 501。
 	// 显式传入时用传入的（测试用）。
 	Claimer claim.Claimer
-	// Captcha 为 nil 时用「显式未实现」的实现（空配置），对应 A6。
+
+	// Captcha 为 nil 时**默认接真实实现**（A6）：配置来自公开目录
+	// `client/configs`（拉不到回落静态默认值），求解用系统已装浏览器
+	// 「用时现解」（不常驻预解池，见 captcha.Manager 的包注释）。
+	// 显式传入时用传入的（测试用 —— 契约回放注入 Static 以免 CI 依赖网络/浏览器）。
 	Captcha captcha.Provider
 }
 
@@ -182,6 +188,21 @@ func New(cfg Config) *Server {
 		claimer = claim.NewService(cfg.Store)
 	}
 
+	// 验证码（A6）：默认接真实实现。配置来自公开目录（同一条走环境代理的出站
+	// 客户端，A5 实测管理侧出站无直连分支），拉不到回落静态默认值；求解走
+	// `captcha.CDPSolver`（系统已装浏览器 + 用时现解）。
+	//
+	// 配置读取本身**不触网就能装配**：NewManager 延迟到第一次 Config()/Acquire()
+	// 才去拉，所以这里构造不会拖慢启动，也不会因离线上游而启动失败。
+	captchaProvider := cfg.Captcha
+	if captchaProvider == nil {
+		captchaProvider = captcha.NewManager(captcha.Options{
+			Source: agent.New(),
+			Solver: captcha.NewCDPSolver(captcha.SolveOptions{Logf: captchaLogf}),
+			Logf:   captchaLogf,
+		})
+	}
+
 	api := adminapi.New(adminapi.Deps{
 		Store:      cfg.Store,
 		Guard:      guard,
@@ -189,7 +210,7 @@ func New(cfg Config) *Server {
 		Sessions:   sessions,
 		Quota:      quotaRefresher,
 		Claimer:    claimer,
-		Captcha:    cfg.Captcha,
+		Captcha:    captchaProvider,
 		Settings:   cache,
 		Configured: cfg.Configured,
 	})
@@ -250,6 +271,15 @@ func (s *Server) Version() string { return s.version }
 // 凭 notes 里的 `id/model/stream/prompt/status/…` 编一套字段会污染契约。
 // 拿到真实网关流量后再补采 —— 见 PROVENANCE.md「A3 未覆盖的分支」。
 func (s *Server) Ring() *reqlog.Ring { return s.ring }
+
+// captchaLogf 把验证码链路（拉配置、起浏览器、求解）的过程写到 stderr。
+//
+// 前缀与 CLI 的其它诊断一致（`zcode2api-go: …`）。**刻意不用标准库 log**：
+// 它的默认 logger 会带上本机时区时间戳，而这些行只在排查「验证码解不出来」
+// 时才有人看，与请求日志（reqlog）混在一起反而更难认。写成一行一事。
+func captchaLogf(format string, args ...any) {
+	fmt.Fprintf(os.Stderr, "zcode2api-go: captcha: "+format+"\n", args...)
+}
 
 // metaResponse 是 `GET /meta` 的响应体。**只有一个键**（实测靶机如此）。
 type metaResponse struct {

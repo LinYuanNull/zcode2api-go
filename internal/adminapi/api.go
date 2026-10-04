@@ -94,7 +94,14 @@ func New(d Deps) *API {
 		d.Claimer = claim.Unavailable{}
 	}
 	if d.Captcha == nil {
-		d.Captcha = captcha.Unavailable{}
+		// 缺项时用**样本同值的默认配置**（不是空配置）。
+		//
+		// 为什么不返回空串：样本 `15-claim-captcha-config.GET.json` 记的是
+		// `{"enabled":true,"scene_id":"11xygtvd","region":"cn","prefix":"no8xfe"}`，
+		// 而这四个值就是上游拉不到动态配置时的静态默认值。返回空串会让面板侧的
+		// 人机验证控件拿不到 SceneId 而**整个不可用** —— 那比「拿不到当前值」
+		// 更糟，且与样本形态不符。
+		d.Captcha = captcha.Static{C: captcha.Default}
 	}
 	if d.Settings == nil {
 		d.Settings = settings.NewCache(d.Store, d.Configured)
