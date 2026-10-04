@@ -19,12 +19,22 @@ OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 
 白名单重建出站 + 解析上游响应转成 OpenAI 形状（JSON / SSE）。调度器按「逐个账号试到成功」
 实现，错误分类（401/403/402/429/5xx/传输失败/客户端错）与冷却逐条对齐基线。
 
-**A5 进行中 —— 登录链路已接通**：`POST /admin/api/login/start` 会真的去打上游
-`oauth/cli/init`（`flow_id` 用**上游**给的那个），`GET /admin/api/login/poll/{flow_id}`
-逐次打上游 `oauth/cli/poll` 并原样透传 `status`；未知 / 过期 flow 本地回 `expired`
-（零出站）。出站头与体已用本地 MITM 抓包**逐字节**对照样本。
-额度查询（`quota`）与套餐领取（`claim`）**仍是占位**，见 A5 剩余项；`ready` 之后把凭据
-落库成账号这一步**未采样**（需真实账号），因此只透传状态、不伪造账号。
+**A5 —— 登录 / 额度 / 领取三条管理侧链路已接通（已采样的部分全部落地）**：
+
+- **登录**：`POST /admin/api/login/start` 会真的去打上游 `oauth/cli/init`
+  （`flow_id` 用**上游**给的那个），`GET /admin/api/login/poll/{flow_id}` 逐次打上游
+  `oauth/cli/poll` 并原样透传 `status`；未知 / 过期 flow 本地回 `expired`（零出站）。
+- **额度**：`POST /admin/api/accounts`（主触发点）、启动自刷、`accounts/{id}/refresh`
+  会对 `active` 的 JWT 账号**三条并发**查上游（同批共用一个 `X-Request-Id`）。
+  `refresh` 的 FRESH / CACHED 两种形态按**键名**区分（`result` vs `message`）；
+  被判 `invalid` 之后**永不再查**。
+- **领取**：`claim/preview`、`claim`、`claim/manual`、`claim/captcha-config`
+  **零出站**（只读已存状态）；凭据失效账号的回执与旁录样本**逐字节一致**。
+
+**未采样 ⇒ 显式报错（501），绝不伪造**：额度查询的 `200` 成功体、真实领取
+（**上游端点表里根本没有领取端点**）、OAuth 的 `ready` 之后凭据落库。
+三者都需要**真实账号**走完整授权，因此本实现只做到「有样本的那一半」，
+并把界线写在错误里（`ErrSuccessShapeUnsampled` / `ErrUnsampled`）。
 
 | 阶段 | 内容 | 状态 |
 |---|---|---|
@@ -33,7 +43,7 @@ OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 
 | A2 | 账号池与存储（store / models / fingerprint / settings / constants） | ✅ |
 | A3 | 管理 API（22 路由 + 鉴权 + settings 读写） | ✅ |
 | A4 | 转发链路（调度器 / body 变换 / SSE / 错误分类） | ✅ |
-| A5 | 额度、领取、登录 | 🟡 登录 ✅ · 额度 ⬜ · 领取 ⬜ |
+| A5 | 额度、领取、登录 | ✅ 登录 ✅ · 额度 ✅ · 领取 ✅（均限已采样分支） |
 | A6 | 验证码（Go 自写 CDP 客户端） | ⬜ |
 | A7 | 发布 v0.1.0 | ⬜ |
 

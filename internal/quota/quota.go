@@ -8,6 +8,7 @@ package quota
 import (
 	"errors"
 
+	"github.com/LinYuanNull/zcode2api-go/internal/constants"
 	"github.com/LinYuanNull/zcode2api-go/internal/models"
 )
 
@@ -73,4 +74,6 @@ const NonJWTMessages = "仅 Coding Plan (JWT) 账号支持额度查询"
 // ⚠️ 这是**网关自己**的话，不是上游的原话：额度查询失败时上游回的是
 // `404 page not found`（usage）或**空体**（billing 的 401）—— 见 observations.md 4.3。
 // 所以不能把上游错误体直接当这句话用。
-const InvalidCredentialMessage = "凭证失效，请重新授权"
+//
+// 真源在 `constants.MsgInvalidCredential`（claim 包用同一句，不能各写一份）。
+const InvalidCredentialMessage = constants.MsgInvalidCredential

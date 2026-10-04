@@ -303,14 +303,64 @@ UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbo
 | 同上，`poll` | GET `/api/v1/oauth/cli/poll/<flow_id>`，头**恰好** 5 个（无 `Content-Type`），Bearer 与 `init` **同值**、64 hex —— 与样本 `02` 一致 |
 | 单测（`internal/agent` 8 例 + `internal/oauth` 12 例） | 全绿（假上游 `httptest` + `SetA5BaseForTest`，不依赖 z.ai 可达） |
 | 契约回放（A3 的 43 条 + 空池分支） | 全绿（`11-login-start` 的「已知分歧」已消除，改为 volatile `flow_id`/`authorize_url`） |
+| **A5-3 真实二进制端到端**（`tools/e2e_quota.py`） | **31/31**：FRESH / CACHED 两形态逐字节、同批 `X-Request-Id` 相同、出站头**恰好** 17 个、`invalid` 之后零出站、`refresh all` 汇总 |
+| **A5-4 真实二进制端到端**（`tools/e2e_claim.py`） | **34/34**：两条沙盒（失效 / `active`）；失效分支三条路由与旁录**逐字节一致**且**之后零出站**；`active` 分支三条路由 **501** 且说明点明账号与 `status=active`；`claim` 子命令在无成功时非零退出 |
 | `gofmt -l .` / `go vet ./...` / `go test ./...` | 干净 / OK / 全绿 |
 
 **提交与 CI**：A5-1 的实测订正落地于 `2aa8b6d`，A5-2 落地于 `eaaf90a`
-（`feat(A5-2): 登录链路真实落地`）。CI run
+（`feat(A5-2): 登录链路真实落地`），A5-3 落地于 `497e6cf`
+（`feat(A5-3): 额度查询真实落地`）。CI run
 [`37157384935`](https://github.com/LinYuanNull/zcode2api-go/actions/runs/37157384935) **success** ——
 `gofmt` / `go vet` / `go build` / `go test` / 契约键序五步全绿。
 其中 `go test` 跑在 **ubuntu-latest** 上，正好验证了「契约回放已**不依赖 z.ai 可达性**」
 这一点（否则登录样本在 CI 上必然随机失败）。
+
+### 领取链路实现依据（A5-4）
+
+领取的判据不是「出站样本」，而是**入站旁录**：本轮三条 claim 路由**零出站**，
+所以契约体现在响应体本身 —— `fixtures/admin-responses.json` 的 `claim/preview` /
+`claim` / `claim/manual` 三条 `body_text`，外加 `docs/contract/admin/13-*` / `14-*` /
+`15-*` / `16-*` 四组样本。实现（`internal/claim`）的范围就由此划定：
+
+| 分支 | 依据 | 本实现 |
+|---|---|---|
+| 候选 = JWT 账号 | `13-*` / `14-*` 的 notes（「无 JWT 账号时为空」）+ `10-account-refresh-nonjwt` | 实现 |
+| 池里无候选 → `{"preview":[]}` / `{"outcomes":[],"summary":{"ok":0,"fail":0}}` | `13-*` / `14-*` 逐字节 | 实现 |
+| **凭据失效**（`status=invalid`）的 preview 行 | 旁录 `claim/preview` 逐字节：`plans:[]`、`error`、`activated:false`、**`activation_error:null`** | 实现 |
+| 同上，`claim` 与 `claim/manual` 的回执 | 旁录两条 `body_text` **逐字相同**；`summary` 由回执逐条数出 | 实现 |
+| `claim/manual` 缺 `account_id` → 400；非 JWT / 不存在 → 404 | `16-claim-manual-{missing-id,404}` | 实现（在调用领取器**之前**判） |
+| `claim/captcha-config` | `15-*`：`{enabled, scene_id, region, prefix}` | 实现为**诚实降级**的空配置（未接 A6 时 `enabled:false` + 空串） |
+| **`status=active` 的真实领取** | **无样本**（下节第 4 条） | **显式报错（501）** |
+
+三条实施要点（都是「看起来能省、省了就错」的地方）：
+
+1. **`activation_error` 必须是「键在、值为 `null`」，不能是 `omitempty`**。写成
+   `string` + `omitempty` 时空值会把**整个键**省掉，形态与旁录不符。字段类型是
+   `*string` 且不带 `omitempty`，`adminapi/claim_test.go` 有一条断言专门钉它。
+2. **`plans` 必须是 `[]` 而不是 `null`**：走 `[]Plan{}`（非 nil 空切片）。
+3. **只要有一个候选不是 `invalid` 就整体报错，不回部分结果**。把「有样本的行」与
+   「猜的行」混在同一个数组里返回，调用方无法分辨哪部分可信；宁可 501 并说明是哪个
+   账号、什么状态卡住了。
+
+`account_ids` 的过滤语义：`{"account_ids":[…]}` 是**过滤器**，空 / 缺省 = 全部候选。
+**这是推断**（不是样本）：`14-*` 的请求体是 `{}` 而池恰好是空的，两种情况都产出空 outcomes，
+分不出「空 = 全部」还是「空 = 一条都不领」。判据取自上游 Python 侧把 `account_ids` 当可选
+过滤器的写法（`set(body.get("account_ids") or [])`，旁证见协同仓库 ModelMux 的
+`test/fake_zcode.py` 对同一契约的仿真），且顺序按**池内顺序**而非请求顺序。
+**待真实账号补采时校准。**
+
+同理，`POST /admin/api/claim` 的**成功回执形状**（`plan_name` / `grants` / `code` / `next_at`
+的键序）也没有样本。协同仓库的 `test/fake_zcode.py` 里有一份「按上游仿真」的写法，其中
+1005 分支的键序是 `…ok, code, message, next_at`，与 `14-*` notes 记的
+`…ok, plan_name?, grants?, message?, code?, next_at?` **不一致**。两份都不是样本，
+故**不据此实现**，登记在此供补采时逐项核对 —— 这正是「不凭猜测补全」要防的情形。
+
+**`claim_round_interval` 目前不驱动任何代码。** 设置项本身有样本（默认 3600，且能被
+`ZCODE_CLAIM_ROUND_INTERVAL` 覆盖为首启值），但**没有任何样本显示存在一个周期性领取循环**：
+本轮三条 claim 路由零出站、且只在被请求时才产生响应；`internal/quota` 那边有实测到
+「启动自刷」这个触发点（observations.md 4.4 第 2 条），claim 侧**没有对应证据**。
+因此不实现定时器 —— 一个不会产生任何可观测行为的后台循环既无法验收，也会在
+`invalid` 账号上安静地空转。待补采（真实账号 + 到点观察出站与 `next_at`）后再定。
 
 ### A5 未覆盖（不凭猜测补全）
 
@@ -318,8 +368,13 @@ UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbo
    因此本实现只**原样透传** `status`，**不伪造账号**（`Account` 落库留给拿到真实账号后的步骤）。
 2. **poll 的 `failed` 语义态**：只诱发到 429（限流），未拿到 `status=failed`。
 3. **额度查询的 `200` 成功体**：`usage` / `billing/*` 在凭据**有效**时的结构，以及它如何映射到
-   账号对象的 `quota` / `plan` / `plans` —— 本轮全是 401/404。**A5-3 实现时必须对这一分支显式报错。**
+   账号对象的 `quota` / `plan` / `plans` —— 本轮全是 401/404。**A5-3 已按纪律对该分支显式报错**
+   （`ErrSuccessShapeUnsampled` → 501，且**不改账号状态**）。
 4. **`claim` 领取成功路径**：验证码换票、`plans` 填充、`activation_error` 取值。
+   ⚠️ 本轮更关键的一条：**上游端点表里根本没有领取端点**（`observations.md` 一之表只有
+   oauth init/poll 与 zcode-plan usage/billing 共 5 个），所以「往哪发」都不知道 ——
+   它比「响应形状未知」更靠前一步。**A5-4 已按纪律对该分支显式报错**（`ErrUnsampled` → 501）。
+   补采前必须先有**真实账号**走完 OAuth（第 1 条），再让该账号真的领一次。
 5. **`quota_refresh_interval` 的窗口起算点**：已知默认 1800、置 0 立即重查、进程启动快照。
 
 ### 尚未接通的接缝
@@ -327,8 +382,7 @@ UA）、转发链路又是另一套。依据全部集中在 `docs/contract/outbo
 - **`login` 子命令**：管理面板的登录链路已通（`/admin/api/login/start` + `poll`），
   但 `zcode2api-go login` 这个 CLI 子命令未接通 —— 缺的是第 1 条（`ready` 之后凭据落库），
   它未采样，所以 CLI 不假装能完成登录。
-- **`internal/quota` / `internal/claim` / `internal/captcha`**：仍是占位实现（对应分支 501），
-  见 A5-3 与 A6。
+- **`internal/captcha`**：仍是占位实现（`captcha-config` 返回空配置），求解器属 A6。
 
 ## 附：仍待补采的未覆盖分支（A2 / A4）
 

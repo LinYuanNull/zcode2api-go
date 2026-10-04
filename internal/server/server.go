@@ -72,7 +72,7 @@ type Config struct {
 	// MonitoringKeep 覆盖请求监控环形容量；<=0 用 constants.MonitoringKeep。
 	MonitoringKeep int
 
-	// ── 以下为可选接缝（A5/A6 接上）。
+	// ── 以下为可选接缝（A5 已按要求接上，A6 待接）。
 	//
 	// Sessions 是管理面登录两条路由的实现。nil 时**默认接真实实现**
 	// （`oauth.NewService` + 真实出站客户端）—— 这不是「未实现」，
@@ -84,9 +84,11 @@ type Config struct {
 	// （501），绝不伪造 quota/plan。显式传入时用传入的（测试用）。
 	Quota quota.Refresher
 
-	// Claimer / Captcha 为 nil 时用「显式未实现」的实现，
-	// 对应分支一律 501，绝不伪造成功（A5-4 / A6 接上）。
+	// Claimer 为 nil 时**默认接真实实现**（A5-4）：读账号池的已存状态，
+	// 失效账号产出旁录样本那一行 / 那一条（零出站）；成功路径未采样 ⇒ 501。
+	// 显式传入时用传入的（测试用）。
 	Claimer claim.Claimer
+	// Captcha 为 nil 时用「显式未实现」的实现（空配置），对应 A6。
 	Captcha captcha.Provider
 }
 
@@ -172,13 +174,21 @@ func New(cfg Config) *Server {
 		quotaRefresher = quotaSvc
 	}
 
+	// 领取（A5-4）：默认接真实实现。它**只读账号池的已存状态**（实测
+	// `claim/preview` / `claim` / `claim/manual` 三条零出站），失效账号走有样本的
+	// 分支；真正要打上游的成功路径未采样 ⇒ 显式 501，绝不伪造领取结果。
+	claimer := cfg.Claimer
+	if claimer == nil {
+		claimer = claim.NewService(cfg.Store)
+	}
+
 	api := adminapi.New(adminapi.Deps{
 		Store:      cfg.Store,
 		Guard:      guard,
 		Ring:       ring,
 		Sessions:   sessions,
 		Quota:      quotaRefresher,
-		Claimer:    cfg.Claimer,
+		Claimer:    claimer,
 		Captcha:    cfg.Captcha,
 		Settings:   cache,
 		Configured: cfg.Configured,

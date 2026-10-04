@@ -46,6 +46,21 @@ const (
 	StatusInvalid   = "invalid"
 )
 
+// 账号级展示文案。**集中在这里是为了防两处字面量漂移** ——
+// 同一句话同时出现在额度刷新与领取两个包里，各自写一份迟早会改岔。
+const (
+	// MsgInvalidCredential 是「凭据失效」的统一文案。
+	//
+	// 逐字取自 `docs/contract/outbound-admin/fixtures/admin-responses.json`，
+	// 四处**都是同一句**：`accounts/refresh` 的 FRESH/CACHED 两形态、
+	// `claim/preview` 的 `error`、`claim`（含 `claim/manual`）的 `outcomes[].message`。
+	//
+	// ⚠️ 这是**网关自己**的话，不是上游的原话：额度查询失败时上游回的是
+	// `404 page not found`（usage）或**空体**（billing 的 401）—— 见 observations.md 4.3。
+	// 所以不能把上游错误体直接当这句话用。
+	MsgInvalidCredential = "凭证失效，请重新授权"
+)
+
 // 设置项默认值。依据：observations.md #12。
 //
 // ⚠️ `admin_key` **没有常量默认值** —— 它是**运行期配置**（`ZCODE_ADMIN_KEY`，

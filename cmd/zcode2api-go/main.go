@@ -11,7 +11,7 @@
 //
 // 分期方案见 ModelMux 仓库的 docs/zcode-native-port-plan.md。
 // 当前进度：A0 骨架 ✅ / A1 契约固化 ✅ / A2 账号池与存储 ✅ / A3 管理 API ✅ /
-// A4 转发链路 ✅ / A5 登录与额度 ✅（领取待做）；A6 验证码、A7 发版待做。
+// A4 转发链路 ✅ / A5 登录与额度 ✅、领取 ✅（仅已采样分支）；A6 验证码、A7 发版待做。
 package main
 
 import (
@@ -30,6 +30,7 @@ import (
 
 	"github.com/LinYuanNull/zcode2api-go/internal/appdir"
 	"github.com/LinYuanNull/zcode2api-go/internal/buildinfo"
+	"github.com/LinYuanNull/zcode2api-go/internal/claim"
 	"github.com/LinYuanNull/zcode2api-go/internal/constants"
 	"github.com/LinYuanNull/zcode2api-go/internal/gateway"
 	"github.com/LinYuanNull/zcode2api-go/internal/server"
@@ -248,7 +249,7 @@ func runSetAdminKey(args []string) error {
 	return nil
 }
 
-// ── 尚未实现的子命令（A5 余额 / 领取、A6）───────────────────
+// ── 尚未实现的子命令（A6）───────────────────────────────────
 
 // runLogin 尚未接通。OAuth 服务层（`internal/oauth`）与两条管理 API 已可用，
 // 面板登录就是走它们；缺的是 **`ready` 之后把凭据落库成账号** 这一步 ——
@@ -259,8 +260,52 @@ func runLogin(_ []string) error {
 		"`ready` 之后凭据落库成账号这一步未采样，见 docs/contract/outbound-admin/observations.md 第九节")
 }
 
-func runClaim(_ []string) error {
-	return errors.New("claim 尚未实现：套餐领取需要额度/领取/验证码链路，属于 A5/A6 阶段")
+// runClaim 立即执行一次套餐领取。
+//
+// 只做**已采样**的那部分：候选 = JWT 账号，凭据失效的账号产出回执
+// （旁录 `claim` 的形状，零出站）。需要真实上游领取（+ 验证码换票）的分支未采样，
+// 此时 `claim.Service` 返回 `ErrUnsampled`，命令**非零退出**并说明是哪个账号卡在
+// 哪一步 —— 不假装领到，也不静默跳过。
+func runClaim(args []string) error {
+	fs := newFlagSet("claim")
+	dataDir := fs.String("data-dir", "", "数据目录（$ZCODE_DATA_DIR）")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	dir, err := appdir.DataDir(*dataDir)
+	if err != nil {
+		return err
+	}
+	st, err := store.Open(dir + string(os.PathSeparator) + "accounts.db")
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	if len(claim.Candidates(st.List())) == 0 {
+		fmt.Println("账号池里没有 JWT 账号，本轮无可领取对象。")
+		return nil
+	}
+
+	outcomes, err := claim.NewService(st).Claim(nil)
+	if err != nil {
+		return err
+	}
+	var ok, fail int
+	for _, o := range outcomes {
+		if o.OK {
+			ok++
+			fmt.Printf("[成功] %s（%s）: 套餐 %s\n", o.AccountName, o.AccountID, o.PlanName)
+			continue
+		}
+		fail++
+		fmt.Printf("[失败] %s（%s）: %s\n", o.AccountName, o.AccountID, o.Message)
+	}
+	fmt.Printf("\n共 %d 个账号：成功 %d / 失败 %d\n", len(outcomes), ok, fail)
+	if ok == 0 {
+		return fmt.Errorf("本轮没有账号领取成功（%d 个失败）", fail)
+	}
+	return nil
 }
 
 // ── 参数工具 ────────────────────────────────────────────────
