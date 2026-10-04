@@ -11,7 +11,7 @@
 //
 // 分期方案见 ModelMux 仓库的 docs/zcode-native-port-plan.md。
 // 当前进度：A0 骨架 ✅ / A1 契约固化 ✅ / A2 账号池与存储 ✅ / A3 管理 API ✅ /
-// A4 转发链路 ✅ / **A5 登录链路 ✅（额度、领取待做）**；A6 验证码、A7 发版待做。
+// A4 转发链路 ✅ / A5 登录与额度 ✅（领取待做）；A6 验证码、A7 发版待做。
 package main
 
 import (
@@ -158,6 +158,11 @@ func runServe(args []string) error {
 		cfg.Models = m
 	}
 	srv := server.New(cfg)
+
+	// 启动自刷（A5-3 的触发点之一，observations.md 4.4 第 2 条）：对池里
+	// `active` 的 JWT 账号各查一次额度。放 goroutine 里，不阻塞监听；
+	// 池里没有可查账号时它什么都不做（默认部署就是这种）。
+	go srv.BootRefresh()
 
 	addr := net.JoinHostPort(envOr(*host, "ZCODE_HOST", "127.0.0.1"), strconv.Itoa(envInt(*port, "ZCODE_PORT", 3000)))
 	ln, err := net.Listen("tcp", addr)

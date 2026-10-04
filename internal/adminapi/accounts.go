@@ -1,6 +1,7 @@
 package adminapi
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -94,6 +95,7 @@ func (a *API) handleAccountsAdd(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteDetail(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		a.probeQuotaAsync(acc)
 		ids = append(ids, acc.ID)
 	}
 	httpx.WriteJSON(w, http.StatusOK, accountsAddResponse{Count: int64(len(ids)), IDs: ids})
@@ -254,11 +256,19 @@ func (a *API) handleAccountsRefreshAll(w http.ResponseWriter, r *http.Request) {
 			candidates = append(candidates, acc)
 		}
 	}
-	if len(candidates) > 0 {
-		// 空池分支已由样本证实（全 0）；有候选时必须打上游，属 A5。
-		notImplemented(w, "全量额度刷新需要上游调用（A5）")
-		return
+	for _, acc := range candidates {
+		res, err := a.d.Quota.Refresh(acc)
+		if err != nil {
+			writeQuotaError(w, err)
+			return
+		}
+		if res.OK {
+			resp.Summary.OK++
+		} else {
+			resp.Summary.Fail++
+		}
 	}
+	resp.Count = int64(len(candidates))
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -270,6 +280,16 @@ type accountRefreshResponse struct {
 	Message string `json:"message"`
 }
 
+// handleAccountRefresh 刷新单个账号的额度。
+//
+// 三条分支：
+//
+//  1. **非 JWT** ⇒ 200 `{ok:false,message:"仅 Coding Plan (JWT) 账号支持额度查询"}`（样本）。
+//  2. **JWT 且真的查了上游（凭据失效）** ⇒ 200 `{ok:false,result:{error:…},account:{…}}`。
+//  3. **JWT 且未出站（invalid / 命中时间窗）** ⇒ 200 `{ok:false,message:…,account:{…}}`。
+//
+// 两种 JWT 形态由 `quota.Result` 的 `Failure` / `Message` 区分，**不是**靠
+// `account.status` —— 见 quota.Result 的说明。
 func (a *API) handleAccountRefresh(w http.ResponseWriter, r *http.Request) {
 	acc, ok := a.accountOr404(w, r)
 	if !ok {
@@ -284,10 +304,87 @@ func (a *API) handleAccountRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := a.d.Quota.Refresh(acc)
 	if err != nil {
-		notImplemented(w, "JWT 账号额度查询需要上游调用（A5）")
+		writeQuotaError(w, err)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, accountRefreshResponse{OK: res.OK, Message: res.Message})
+	writeRefreshResult(w, res)
+}
+
+// writeRefreshResult 按实测键序装配额度刷新响应。
+//
+// 键序是**契约**（fixture `admin-responses.json`）：
+//
+//	FRESH : ok, result, account
+//	CACHED: ok, message, account
+//
+// 用保序对象而不是 struct：`result` 与 `message` 是**互斥**的两个位置，
+// 用 struct 就得靠 `omitempty` 拼，而 `omitempty` 会把空串也省掉
+// （CACHED 的 message 可能就是空串 —— 那也要写出来）。
+func writeRefreshResult(w http.ResponseWriter, res quota.Result) {
+	o := models.NewOrderedObject()
+	if err := o.Set("ok", res.OK); err != nil {
+		httpx.WriteDetail(w, http.StatusInternalServerError, "响应体编码失败")
+		return
+	}
+	if res.Failure != "" {
+		inner := models.NewOrderedObject()
+		if err := inner.Set("error", res.Failure); err != nil {
+			httpx.WriteDetail(w, http.StatusInternalServerError, "响应体编码失败")
+			return
+		}
+		raw, err := inner.Bytes()
+		if err != nil {
+			httpx.WriteDetail(w, http.StatusInternalServerError, "响应体编码失败")
+			return
+		}
+		o.SetRaw("result", raw)
+	} else {
+		if err := o.Set("message", res.Message); err != nil {
+			httpx.WriteDetail(w, http.StatusInternalServerError, "响应体编码失败")
+			return
+		}
+	}
+	if res.Account != nil {
+		if err := o.Set("account", res.Account.View()); err != nil {
+			httpx.WriteDetail(w, http.StatusInternalServerError, "响应体编码失败")
+			return
+		}
+	}
+	body, err := o.Bytes()
+	if err != nil {
+		httpx.WriteDetail(w, http.StatusInternalServerError, "响应体编码失败")
+		return
+	}
+	httpx.WriteRaw(w, http.StatusOK, body)
+}
+
+// writeQuotaError 把额度刷新的错误分派成两种状态码。
+//
+//   - 「未采样 / 没有上游」⇒ **501**（本项目的纪律：未实现的分支明确报错）；
+//   - 「真的打了上游但拿不到可用答案」（传输失败、未采样的状态组合、
+//     落库失败）⇒ **502**（上游侧问题，与 501「我方没实现」不是一回事）。
+func writeQuotaError(w http.ResponseWriter, err error) {
+	if errors.Is(err, quota.ErrSuccessShapeUnsampled) || errors.Is(err, quota.ErrUpstreamUnavailable) {
+		notImplemented(w, err.Error())
+		return
+	}
+	httpx.WriteDetail(w, http.StatusBadGateway, "额度查询失败: "+err.Error())
+}
+
+// probeQuotaAsync 在新增**可查额度的**账号后异步探一次。
+//
+// 依据：observations.md 4.4 第 1 条 —— `POST /admin/api/accounts` 是额度查询的
+// **主触发点**（采样器用 `probe_a5_attr*.py` 归因证明 add 之后立刻出现 3 条出站）。
+//
+// 为什么是**异步**：样本里 add 的响应只有 `{count,ids}`，**不含任何额度信息**，
+// 说明这次探测的结果不参与响应；同步做只会让「粘贴一个 JWT」这个动作白等
+// 三条出站（含 30s 建连超时）。**推断**（已登记 PROVENANCE）：靶机上它是同步等待
+// 还是后台任务无从区分 —— 两者对外可观测的接口行为相同。
+func (a *API) probeQuotaAsync(acc models.Account) {
+	if !quota.SupportsRefresh(acc) || acc.Status != constants.StatusActive {
+		return
+	}
+	go func() { _, _ = a.d.Quota.Refresh(acc) }()
 }
 
 // ── 工具 ────────────────────────────────────────────────────

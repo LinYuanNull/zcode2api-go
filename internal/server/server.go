@@ -79,9 +79,13 @@ type Config struct {
 	// A5 已把 OAuth 设备码链路接通；只有需要上游但当前不可达时才报错。
 	Sessions oauth.Sessions
 
-	// Quota / Claimer / Captcha 为 nil 时用「显式未实现」的实现，
-	// 对应分支一律 501，绝不伪造成功（A5-3 / A6 接上）。
-	Quota   quota.Refresher
+	// Quota 为 nil 时**默认接真实实现**（A5-3）：三条并发 + active 门控 +
+	// `quota_refresh_interval` 窗口快照。它的 `200 成功体未采样` 分支会显式报错
+	// （501），绝不伪造 quota/plan。显式传入时用传入的（测试用）。
+	Quota quota.Refresher
+
+	// Claimer / Captcha 为 nil 时用「显式未实现」的实现，
+	// 对应分支一律 501，绝不伪造成功（A5-4 / A6 接上）。
 	Claimer claim.Claimer
 	Captcha captcha.Provider
 }
@@ -96,6 +100,11 @@ type Server struct {
 	settings *settings.Cache
 	guard    *authadmin.Guard
 	version  string
+
+	// quotaSvc 是默认装配出来的额度服务（`Config.Quota` 显式给了就是 nil）。
+	// 只有「启动自刷」需要它的具体类型（`RefreshActives`）——
+	// 请求路径一律走 `quota.Refresher` 接口。
+	quotaSvc *quota.Service
 }
 
 // New 装配服务。Config.Store 为 nil 时 panic —— 装配错误必须在启动时暴露，
@@ -150,12 +159,25 @@ func New(cfg Config) *Server {
 		sessions = oauth.NewService(oauth.NewRegistry(), agent.New())
 	}
 
+	// 额度查询（A5-3）：默认接真实实现。`quota_refresh_interval` 取**启动快照**
+	// （实测：该值在进程启动时快照，运行期改设置不生效，observations.md 4.4）。
+	var quotaSvc *quota.Service
+	quotaRefresher := cfg.Quota
+	if quotaRefresher == nil {
+		var interval int64
+		if s, err := cache.Get(); err == nil {
+			interval = s.QuotaRefreshInterval
+		}
+		quotaSvc = quota.NewService(agent.New(), cfg.Store, interval)
+		quotaRefresher = quotaSvc
+	}
+
 	api := adminapi.New(adminapi.Deps{
 		Store:      cfg.Store,
 		Guard:      guard,
 		Ring:       ring,
 		Sessions:   sessions,
-		Quota:      cfg.Quota,
+		Quota:      quotaRefresher,
 		Claimer:    cfg.Claimer,
 		Captcha:    cfg.Captcha,
 		Settings:   cache,
@@ -187,7 +209,23 @@ func New(cfg Config) *Server {
 		settings: cache,
 		guard:    guard,
 		version:  version,
+		quotaSvc: quotaSvc,
 	}
+}
+
+// BootRefresh 执行「启动自刷」：对池里全部 `active` 的 JWT 账号各查一次额度。
+// 返回实际尝试的账号数（0 表示池里没有可查的账号）。
+//
+// 依据：observations.md 4.4 第 2 条（触发点之一是**启动**）。
+//
+// 为什么由调用方决定同步 / 异步：这是**唯一的**会在无人请求时发出上游流量的动作，
+// 藏进 `New()` 里就无法验收「启动到底发了几条出站」。`cmd` 用 `go` 起它。
+// 显式注入过 `Config.Quota` 时返回 0（那不是本服务的额度实现，无权自刷）。
+func (s *Server) BootRefresh() int {
+	if s.quotaSvc == nil {
+		return 0
+	}
+	return s.quotaSvc.RefreshActives()
 }
 
 // Handler 返回装配好的 http.Handler。

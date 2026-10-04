@@ -188,7 +188,13 @@ func main() {
 		log.Fatalf("监听失败: %v", err)
 	}
 	fmt.Printf("LISTEN %s\n", ln.Addr().String())
-	os.Stdout.Sync()
+	// ⚠️ **不要在这里 `os.Stdout.Sync()`**。Go 的 `os.Stdout` 本来就无缓冲，
+	// 每行 Write 都直接落到操作系统，Sync 对正确性毫无帮助；而它在 Windows 上是
+	// `FlushFileBuffers`，**对管道会阻塞到对端把缓冲读空**。于是当调用方（脚本）
+	// 自己挑好端口、用 `--listen` 传进来、因而**不需要读 stdout** 时，这一行就永久阻塞：
+	// `net.Listen` 已经成功（TCP 依然能连上、netstat 里是 ESTABLISHED），
+	// 但下面那行 `srv.Serve` 永远不执行 ⇒ 所有请求挂在 accept 队列里，
+	// 表现为「出站请求永无响应」。实测复现见 tools/e2e_quota.py 的排查记录。
 
 	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {
