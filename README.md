@@ -1,21 +1,70 @@
-# zcode2api-go
+<h1 align="center">zcode2api-go</h1>
 
-[![CI](https://github.com/LinYuanNull/zcode2api-go/actions/workflows/ci.yml/badge.svg)](https://github.com/LinYuanNull/zcode2api-go/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <b>ZCode 网关的独立纯 Go 实现 · 把 ZCode 上游包装成 OpenAI 兼容接口的本地服务</b><br>
+  账号池 · 管理面板 · 限时套餐领取 · 设备码登录 · 双协议（OpenAI Chat / Anthropic Messages） · <b>纯 Go · 无 Python · 无 Node · 纯 MIT</b>
+</p>
 
-ZCode 网关的**独立纯 Go 实现**：一个可独立部署的本地服务，把 ZCode 上游包装成
-OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 Go、无 Python、无 Node，
-**纯 MIT**。
+<p align="center">
+  <a href="https://github.com/LinYuanNull/zcode2api-go/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/LinYuanNull/zcode2api-go/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Go" src="https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white&style=flat-square">
+  <img alt="Platform" src="https://img.shields.io/badge/Platform-Windows%20%2F%20Linux-0078D6?style=flat-square">
+  <img alt="API" src="https://img.shields.io/badge/API-OpenAI%20%2F%20Anthropic-412991?style=flat-square">
+  <img alt="Pure Go" src="https://img.shields.io/badge/Pure_Go-No_CGO%20%2F%20No_Python-00ADD8?style=flat-square">
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-green?style=flat-square">
+</p>
+
+---
 
 > **溯源**：本仓库是对 `dengyie/zcode2api`（Python / AGPL-3.0）的**独立 Go 重写**，
 > 不是它的分支、不是移植副本。上游源码**不在本仓库内**，也未被复制、翻译或改写进
 > 本仓库；它只作为「契约采样靶机」留在开发机上，用来记录真实请求 / 响应样本
 > （见 [`PROVENANCE.md`](PROVENANCE.md) 与 [`docs/contract/`](docs/contract/)）。
 
+> ⚠️ **未采样 ⇒ 显式报错（501），绝不伪造成功**。需要真实账号才能走完整授权的分支
+> （额度查询成功体、真实领取、OAuth `ready` 后的凭据落库）一律如实报错，
+> 界线写在错误里（`ErrSuccessShapeUnsampled` / `ErrUnsampled`）。
+
+## 项目简介
+
+zcode2api-go 是一个可**独立部署**的本地服务：把 ZCode 上游包装成 OpenAI 兼容接口，
+自带账号池、管理面板与套餐定时领取。它把上游那套 Python 实现**按实测契约从零重写成 Go**，
+因此可以单文件分发、跨平台交叉编译、静态链接，且**不含任何 AGPL 代码**。
+
+- **纯标准库优先、无 CGO**：单文件可执行程序，交叉编译与静态链接无额外依赖。
+- **契约驱动**：所有路由与响应形状都对着真实采样实现，键顺序、空容器、错误体逐字节对齐
+  （见[契约保真约定](#契约保真约定a3-实测钉死改代码前先读)）。
+- **它也是 Mergence 的内核**：Mergence 的 `zcode` 内置渠道复用本项目的业务层
+  （去掉独立服务外壳，挂到 Mergence 的 provider 接缝上）。
+
+## 核心能力
+
+| 能力 | 说明 |
+|---|---|
+| 🔁 **双协议转发** | `/v1/messages`（Anthropic Messages）与 `/v1/chat/completions`（OpenAI）双出口；保序改写出站 + 逐字节透传响应（含 SSE 逐帧 flush） |
+| 👥 **账号池与调度** | 逐个账号试到成功；错误分类（401/403/402/429/5xx/传输失败/客户端错）与冷却逐条对齐基线 |
+| 📊 **额度查询** | `POST /admin/api/accounts`（主触发点）、启动自刷、`accounts/{id}/refresh`；`active` 的 JWT 账号**三条并发**查上游（同批共用一个 `X-Request-Id`） |
+| 🔑 **设备码登录** | `login/start` 打上游 `oauth/cli/init`（`flow_id` 用上游给的），`login/poll/{flow_id}` 逐次打上游 `oauth/cli/poll` 并原样透传 `status` |
+| 🎁 **限时套餐领取** | `claim/preview` / `claim` / `claim/manual` / `claim/captcha-config` 零出站；凭据失效账号的回执与样本逐字节一致 |
+| 🤖 **验证码求解** | 自写极简 CDP 客户端驱动**系统已装的** Edge / Chrome 跑阿里云无痕验证，产出 `captchaVerifyParam`；**不随包分发浏览器** |
+| 🖥️ **管理面板** | 自带 Web 面板；管理 API 22 路由 + 鉴权 + settings 读写 |
+| 🧾 **保真编码** | 所有 HTTP 响应经 `httpx.WriteJSON` → `models.MarshalNoHTMLEscape`（不转义 `< > &`、不转义非 ASCII） |
+
 ## 状态
 
 **v0.1.0 已发布** —— 版本说明见 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)，
 二进制见 [Releases](https://github.com/LinYuanNull/zcode2api-go/releases)。
+
+| 阶段 | 内容 | 状态 |
+|---|---|---|
+| A0 | 立项与骨架（仓库结构、CI、许可、溯源） | ✅ |
+| A1 | 契约固化（25 个路由的真实请求 / 响应样本） | ✅ |
+| A2 | 账号池与存储（store / models / fingerprint / settings / constants） | ✅ |
+| A3 | 管理 API（22 路由 + 鉴权 + settings 读写） | ✅ |
+| A4 | 转发链路（调度器 / body 变换 / SSE / 错误分类） | ✅ |
+| A5 | 额度、领取、登录 | ✅ 登录 · ✅ 额度 · ✅ 领取（均限已采样分支） |
+| A6 | 验证码（Go 自写 CDP 客户端 + 求解器 + 自检命令） | ✅（自动领取未接通） |
+| A7 | 发布 v0.1.0 | ✅ |
 
 **A4 —— 转发链路**：`/v1/messages` 与 `/v1/chat/completions` 的完整链路已就位。
 `/v1/messages` 保序改写出站 + 逐字节透传响应（含 SSE 逐帧 flush）；`/v1/chat/completions`
@@ -53,17 +102,6 @@ OpenAI 兼容接口，自带账号池、管理面板与套餐定时领取。纯 
 三者都需要**真实账号**走完整授权，因此本实现只做到「有样本的那一半」，
 并把界线写在错误里（`ErrSuccessShapeUnsampled` / `ErrUnsampled`）。
 **自动领取仍未接通**：验证码求解器已能产出凭据，但「凭据往哪发」没有出站样本。
-
-| 阶段 | 内容 | 状态 |
-|---|---|---|
-| A0 | 立项与骨架（仓库结构、CI、许可、溯源） | ✅ |
-| A1 | 契约固化（25 个路由的真实请求 / 响应样本） | ✅ |
-| A2 | 账号池与存储（store / models / fingerprint / settings / constants） | ✅ |
-| A3 | 管理 API（22 路由 + 鉴权 + settings 读写） | ✅ |
-| A4 | 转发链路（调度器 / body 变换 / SSE / 错误分类） | ✅ |
-| A5 | 额度、领取、登录 | ✅ 登录 ✅ · 额度 ✅ · 领取 ✅（均限已采样分支） |
-| A6 | 验证码（Go 自写 CDP 客户端 + 求解器 + 自检命令） | ✅（自动领取未接通） |
-| A7 | 发布 v0.1.0 | ✅ |
 
 ## 下载
 
@@ -107,7 +145,7 @@ go run ./cmd/zcode2api-go serve
 | `ZCODE_CHROMIUM_PATH` | *（自动探测）* | 验证码求解用的浏览器；留空则按 Edge → Chrome 探测 |
 | `ZCODE_BROWSER_HEADLESS` | `--headless=new` | 覆盖 headless 参数；置 `off` 表示不带（需要显示器） |
 
-> 上游**没有**网关 Key 的环境变量（`ZCODE_GATEWAY_KEY` 实测不生效），
+> ⚠️ 上游**没有**网关 Key 的环境变量（`ZCODE_GATEWAY_KEY` 实测不生效），
 > 网关 Key 的初值恒为 `""`，只能经 `PUT /admin/api/settings` 设置。
 > 本实现另提供 `--admin-key` / `--gateway-key` 两个命令行开关作为便利扩展。
 >
@@ -170,6 +208,38 @@ zcode2api-go/
 - **空容器写 `[]` / `{}`，不写 `null`**。
 - **未实现的分支一律显式报错**（501 / 502），**绝不伪造成功**。
 
-## 许可
+## 常见问题
+
+### 验证码解不出来？
+
+先跑 `zcode2api-go captcha` 看它报的浏览器路径。定位顺序是 `$ZCODE_CHROMIUM_PATH` → Edge → Chrome；
+都没有就装一个 Edge。需要显示器时把 `ZCODE_BROWSER_HEADLESS=off`。
+
+### 为什么「额度 / 领取」某些分支返回 501？
+
+那些分支**没有出站样本**（需要真实账号走完整授权）。本实现的原则是**如实报错**而不是伪造成功，
+错误里会写明是哪种未采样形状（`ErrSuccessShapeUnsampled` / `ErrUnsampled`）。
+要补齐它们需要新的采样，见 [`PROVENANCE.md`](PROVENANCE.md)。
+
+### 改了环境变量为什么不生效？
+
+上表前四项只在**首次启动写库**，之后以库为准；改名不再生效。改密码请用
+`set-admin-key` 或 `PUT /admin/api/settings`。
+
+### 管理接口为什么返回 `404` 而不是 `401`？
+
+这是**契约**：鉴权在路由匹配**之后**，未知路径一律 `404 {"detail":"Not Found"}`，
+即便不带凭证也不返回 401。
+
+## 免责声明
+
+- 本项目是**本地自用工具**，按「原样」提供，不附带任何明示或暗示的担保。使用者需自行承担
+  使用风险，包括但不限于上游账号被限流、封禁、条款违约等后果。
+- 本项目**不授权、不支持、不参与**任何面向公众的 API 售卖、账号池出租、卡密 / 授权码收费分发，
+  也不支持批量注册小号分发额度。以本项目名义的收费分发与本项目及作者无关。
+- 本项目**不含任何 AGPL 代码**，也**不随包分发**浏览器或任何上游二进制。
+- 请勿把管理面板或网关端口暴露到公网。
+
+## License
 
 MIT，见 [`LICENSE`](LICENSE)。本仓库不含任何 AGPL 代码。
